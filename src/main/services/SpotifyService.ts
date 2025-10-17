@@ -28,7 +28,7 @@ export class SpotifyService {
       headers: {
         Authorization: `Bearer ${tokens.access_token}`,
       },
-      timeout: 30000,
+      timeout: 60000, // Increased to 60 seconds for large requests
     });
   }
 
@@ -56,9 +56,23 @@ export class SpotifyService {
         await this.delay(DEFAULT_DELAY_MS);
         return await apiCall();
       } catch (error) {
-        if (axios.isAxiosError(error) && error.response?.status === 429) {
-          await this.handleRateLimit(error);
-          continue;
+        if (axios.isAxiosError(error)) {
+          // Handle rate limiting
+          if (error.response?.status === 429) {
+            await this.handleRateLimit(error);
+            continue;
+          }
+          
+          // Handle network errors (ECONNRESET, ETIMEDOUT, etc.)
+          if (error.code === 'ECONNRESET' || error.code === 'ETIMEDOUT' || error.code === 'ECONNABORTED') {
+            if (attempt === maxRetries - 1) {
+              throw new Error(`Network error after ${maxRetries} attempts: ${error.message}`);
+            }
+            const waitTime = Math.pow(2, attempt) * 2000; // Longer wait for network errors
+            console.log(`Network error (${error.code}), retrying in ${waitTime}ms... (attempt ${attempt + 1}/${maxRetries})`);
+            await this.delay(waitTime);
+            continue;
+          }
         }
         
         if (attempt === maxRetries - 1) {

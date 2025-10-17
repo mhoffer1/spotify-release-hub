@@ -1,5 +1,40 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import { IPC_CHANNELS } from '../shared/types';
+
+// Define IPC_CHANNELS directly in preload to avoid module resolution issues in sandbox
+const IPC_CHANNELS = {
+  // Auth
+  AUTH_START: 'auth:start',
+  AUTH_SUCCESS: 'auth:success',
+  AUTH_ERROR: 'auth:error',
+  AUTH_CHECK: 'auth:check',
+  AUTH_LOGOUT: 'auth:logout',
+  // Playlist Artist Follower
+  ANALYZE_PLAYLIST: 'playlist:analyze',
+  ANALYZE_PLAYLIST_PROGRESS: 'playlist:analyze:progress',
+  ANALYZE_PLAYLIST_COMPLETE: 'playlist:analyze:complete',
+  FOLLOW_ARTISTS: 'playlist:follow',
+  FOLLOW_ARTISTS_PROGRESS: 'playlist:follow:progress',
+  FOLLOW_ARTISTS_COMPLETE: 'playlist:follow:complete',
+  // New Releases
+  SCAN_RELEASES: 'releases:scan',
+  SCAN_RELEASES_PROGRESS: 'releases:scan:progress',
+  SCAN_RELEASES_COMPLETE: 'releases:scan:complete',
+  // Playlist creation
+  CREATE_PLAYLIST: 'playlist:create',
+  CREATE_PLAYLIST_PROGRESS: 'playlist:create:progress',
+  CREATE_PLAYLIST_COMPLETE: 'playlist:create:complete',
+  // Track management
+  GET_TRACKS_FROM_ALBUMS: 'tracks:get-from-albums',
+  CREATE_PLAYLIST_FROM_TRACKS: 'playlist:create-from-tracks',
+  // Updates
+  UPDATES_CHECK: 'updates:check',
+  UPDATES_AVAILABLE: 'updates:available',
+  UPDATES_NOT_AVAILABLE: 'updates:not-available',
+  UPDATES_ERROR: 'updates:error',
+  // Error
+  ERROR: 'error',
+} as const;
+
 import type {
   AnalyzePlaylistRequest,
   AnalyzePlaylistResponse,
