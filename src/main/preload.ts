@@ -9,13 +9,26 @@ import type {
   ScanReleasesResponse,
   CreatePlaylistRequest,
   CreatePlaylistResponse,
+  CreatePlaylistFromTracksRequest,
   ProgressUpdate,
+  UpdateInfoPayload,
+  UpdateErrorPayload,
+  SpotifyTrack,
+  UpdateCheckOptions,
 } from '../shared/types';
 
-console.log('Preload script starting...');
+type Unsubscribe = () => void;
 
-// Expose protected methods that allow the renderer process to use
-// the ipcRenderer without exposing the entire object
+type InvokeResult<T> = Promise<{ success: boolean; data?: T; error?: string; message?: string }>;
+
+type UpdateCheckResult = Promise<{ success: boolean; message?: string }>;
+
+const subscribe = <T>(channel: (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS], callback: (payload: T) => void): Unsubscribe => {
+  const handler = (_event: unknown, payload: T) => callback(payload);
+  ipcRenderer.on(channel, handler);
+  return () => ipcRenderer.removeListener(channel, handler);
+};
+
 contextBridge.exposeInMainWorld('electronAPI', {
   // Auth
   startAuth: () => ipcRenderer.invoke(IPC_CHANNELS.AUTH_START),
@@ -23,83 +36,76 @@ contextBridge.exposeInMainWorld('electronAPI', {
   logout: () => ipcRenderer.invoke(IPC_CHANNELS.AUTH_LOGOUT),
 
   // Playlist Analyzer
-  analyzePlaylist: (request: AnalyzePlaylistRequest) =>
+  analyzePlaylist: (request: AnalyzePlaylistRequest): InvokeResult<AnalyzePlaylistResponse> =>
     ipcRenderer.invoke(IPC_CHANNELS.ANALYZE_PLAYLIST, request),
-  onAnalyzeProgress: (callback: (progress: ProgressUpdate) => void) => {
-    const subscription = (_event: any, progress: ProgressUpdate) => callback(progress);
-    ipcRenderer.on(IPC_CHANNELS.ANALYZE_PLAYLIST_PROGRESS, subscription);
-    return () => ipcRenderer.removeListener(IPC_CHANNELS.ANALYZE_PLAYLIST_PROGRESS, subscription);
-  },
+  onAnalyzeProgress: (callback: (progress: ProgressUpdate) => void): Unsubscribe =>
+    subscribe(IPC_CHANNELS.ANALYZE_PLAYLIST_PROGRESS, callback),
 
   // Follow Artists
-  followArtists: (request: FollowArtistsRequest) =>
+  followArtists: (request: FollowArtistsRequest): InvokeResult<FollowArtistsResponse> =>
     ipcRenderer.invoke(IPC_CHANNELS.FOLLOW_ARTISTS, request),
-  onFollowProgress: (callback: (progress: ProgressUpdate) => void) => {
-    const subscription = (_event: any, progress: ProgressUpdate) => callback(progress);
-    ipcRenderer.on(IPC_CHANNELS.FOLLOW_ARTISTS_PROGRESS, subscription);
-    return () => ipcRenderer.removeListener(IPC_CHANNELS.FOLLOW_ARTISTS_PROGRESS, subscription);
-  },
+  onFollowProgress: (callback: (progress: ProgressUpdate) => void): Unsubscribe =>
+    subscribe(IPC_CHANNELS.FOLLOW_ARTISTS_PROGRESS, callback),
 
   // Scan Releases
-  scanReleases: (request: ScanReleasesRequest) =>
+  scanReleases: (request: ScanReleasesRequest): InvokeResult<ScanReleasesResponse> =>
     ipcRenderer.invoke(IPC_CHANNELS.SCAN_RELEASES, request),
-  onScanProgress: (callback: (progress: ProgressUpdate) => void) => {
-    const subscription = (_event: any, progress: ProgressUpdate) => callback(progress);
-    ipcRenderer.on(IPC_CHANNELS.SCAN_RELEASES_PROGRESS, subscription);
-    return () => ipcRenderer.removeListener(IPC_CHANNELS.SCAN_RELEASES_PROGRESS, subscription);
-  },
+  onScanProgress: (callback: (progress: ProgressUpdate) => void): Unsubscribe =>
+    subscribe(IPC_CHANNELS.SCAN_RELEASES_PROGRESS, callback),
 
-  // Create Playlist
-  createPlaylist: (request: CreatePlaylistRequest) =>
+  // Playlist creation
+  createPlaylist: (request: CreatePlaylistRequest): InvokeResult<CreatePlaylistResponse> =>
     ipcRenderer.invoke(IPC_CHANNELS.CREATE_PLAYLIST, request),
-  onCreatePlaylistProgress: (callback: (progress: ProgressUpdate) => void) => {
-    const subscription = (_event: any, progress: ProgressUpdate) => callback(progress);
-    ipcRenderer.on(IPC_CHANNELS.CREATE_PLAYLIST_PROGRESS, subscription);
-    return () => ipcRenderer.removeListener(IPC_CHANNELS.CREATE_PLAYLIST_PROGRESS, subscription);
-  },
+  onCreatePlaylistProgress: (callback: (progress: ProgressUpdate) => void): Unsubscribe =>
+    subscribe(IPC_CHANNELS.CREATE_PLAYLIST_PROGRESS, callback),
+
+  // Track management
+  getTracksFromAlbums: (albumIds: string[]): InvokeResult<SpotifyTrack[]> =>
+    ipcRenderer.invoke(IPC_CHANNELS.GET_TRACKS_FROM_ALBUMS, albumIds),
+  createPlaylistFromTracks: (
+    request: CreatePlaylistFromTracksRequest
+  ): InvokeResult<CreatePlaylistResponse> => ipcRenderer.invoke(IPC_CHANNELS.CREATE_PLAYLIST_FROM_TRACKS, request),
+
+  // Updates
+  checkForUpdates: (options?: UpdateCheckOptions): UpdateCheckResult =>
+    ipcRenderer.invoke(IPC_CHANNELS.UPDATES_CHECK, options),
+  onUpdateAvailable: (callback: (info: UpdateInfoPayload) => void): Unsubscribe =>
+    subscribe(IPC_CHANNELS.UPDATES_AVAILABLE, callback),
+  onUpdateNotAvailable: (callback: () => void): Unsubscribe =>
+    subscribe(IPC_CHANNELS.UPDATES_NOT_AVAILABLE, () => callback()),
+  onUpdateError: (callback: (error: UpdateErrorPayload) => void): Unsubscribe =>
+    subscribe(IPC_CHANNELS.UPDATES_ERROR, callback),
+
+  // Utilities
+  openExternal: (url: string) => ipcRenderer.invoke('shell:open-external', url),
 
   // Error handling
-  onError: (callback: (error: { message: string }) => void) => {
-    const subscription = (_event: any, error: { message: string }) => callback(error);
-    ipcRenderer.on(IPC_CHANNELS.ERROR, subscription);
-    return () => ipcRenderer.removeListener(IPC_CHANNELS.ERROR, subscription);
-  },
+  onError: (callback: (error: { message: string }) => void): Unsubscribe =>
+    subscribe(IPC_CHANNELS.ERROR, callback),
 });
 
-// Type declarations for window object
 declare global {
   interface Window {
     electronAPI: {
       startAuth: () => Promise<{ success: boolean; error?: string }>;
-      checkAuth: () => Promise<{ authenticated: boolean }>;
+      checkAuth: () => Promise<{ authenticated: boolean; error?: string }>;
       logout: () => Promise<{ success: boolean }>;
-      analyzePlaylist: (request: AnalyzePlaylistRequest) => Promise<{ 
-        success: boolean; 
-        data?: AnalyzePlaylistResponse; 
-        error?: string 
-      }>;
-      onAnalyzeProgress: (callback: (progress: ProgressUpdate) => void) => () => void;
-      followArtists: (request: FollowArtistsRequest) => Promise<{ 
-        success: boolean; 
-        data?: FollowArtistsResponse; 
-        error?: string 
-      }>;
-      onFollowProgress: (callback: (progress: ProgressUpdate) => void) => () => void;
-      scanReleases: (request: ScanReleasesRequest) => Promise<{ 
-        success: boolean; 
-        data?: ScanReleasesResponse; 
-        error?: string 
-      }>;
-      onScanProgress: (callback: (progress: ProgressUpdate) => void) => () => void;
-      createPlaylist: (request: CreatePlaylistRequest) => Promise<{ 
-        success: boolean; 
-        data?: CreatePlaylistResponse; 
-        error?: string 
-      }>;
-      onCreatePlaylistProgress: (callback: (progress: ProgressUpdate) => void) => () => void;
-      onError: (callback: (error: { message: string }) => void) => () => void;
+      analyzePlaylist: (request: AnalyzePlaylistRequest) => InvokeResult<AnalyzePlaylistResponse>;
+      onAnalyzeProgress: (callback: (progress: ProgressUpdate) => void) => Unsubscribe;
+      followArtists: (request: FollowArtistsRequest) => InvokeResult<FollowArtistsResponse>;
+      onFollowProgress: (callback: (progress: ProgressUpdate) => void) => Unsubscribe;
+      scanReleases: (request: ScanReleasesRequest) => InvokeResult<ScanReleasesResponse>;
+      onScanProgress: (callback: (progress: ProgressUpdate) => void) => Unsubscribe;
+      createPlaylist: (request: CreatePlaylistRequest) => InvokeResult<CreatePlaylistResponse>;
+      onCreatePlaylistProgress: (callback: (progress: ProgressUpdate) => void) => Unsubscribe;
+      getTracksFromAlbums: (albumIds: string[]) => InvokeResult<SpotifyTrack[]>;
+      createPlaylistFromTracks: (request: CreatePlaylistFromTracksRequest) => InvokeResult<CreatePlaylistResponse>;
+      checkForUpdates: (options?: UpdateCheckOptions) => UpdateCheckResult;
+      onUpdateAvailable: (callback: (info: UpdateInfoPayload) => void) => Unsubscribe;
+      onUpdateNotAvailable: (callback: () => void) => Unsubscribe;
+      onUpdateError: (callback: (error: UpdateErrorPayload) => void) => Unsubscribe;
+      openExternal: (url: string) => Promise<{ success: boolean; error?: string }>;
+      onError: (callback: (error: { message: string }) => void) => Unsubscribe;
     };
   }
 }
-
-console.log('Preload script completed, electronAPI exposed');

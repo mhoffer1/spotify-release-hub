@@ -32,7 +32,7 @@ export class AuthService {
 
     if (!this.config.clientId || !this.config.clientSecret) {
       throw new Error(
-        'Missing Spotify credentials. Please set SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET environment variables.'
+        'Missing Spotify credentials. Please create a .env file (see .env.example) or set SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET environment variables.'
       );
     }
 
