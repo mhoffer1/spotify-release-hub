@@ -1,0 +1,326 @@
+.release-finder {
+  max-width: 1400px;
+  margin: 0 auto;
+  position: relative;
+}
+
+/* Sticky progress indicator */
+.sticky-progress {
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  background: linear-gradient(135deg, rgba(29, 185, 84, 0.15) 0%, var(--bg-secondary) 100%);
+  padding: 20px 24px;
+  margin: -40px -40px 32px -40px;
+  border-bottom: 3px solid var(--spotify-green);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(10px);
+}
+
+.progress-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+  margin-top: 12px;
+}
+
+.progress-text {
+  margin: 0;
+  flex: 1;
+  font-size: 15px;
+  font-weight: 500;
+}
+
+.btn-cancel {
+  background: linear-gradient(135deg, #e22134 0%, #ff4444 100%);
+  color: white;
+  padding: 10px 24px;
+  font-size: 14px;
+  font-weight: 700;
+  border-radius: 500px;
+  box-shadow: 0 4px 12px rgba(226, 33, 52, 0.3);
+  transition: all 0.2s ease;
+}
+
+.btn-cancel:hover:not(:disabled) {
+  background: linear-gradient(135deg, #ff4444 0%, #ff6666 100%);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px rgba(226, 33, 52, 0.4);
+}
+
+.control-panel {
+  display: flex;
+  gap: 20px;
+  align-items: flex-end;
+  margin-bottom: 32px;
+  flex-wrap: wrap;
+  padding: 24px;
+  background: var(--bg-secondary);
+  border-radius: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.control-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.control-group label {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-primary);
+  letter-spacing: 0.5px;
+}
+
+.checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  margin-top: 20px;
+  padding: 12px;
+  border-radius: 8px;
+  transition: background 0.2s ease;
+}
+
+.checkbox-label:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.checkbox-label input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+  cursor: pointer;
+  accent-color: var(--spotify-green);
+}
+
+.checkbox-label span {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.small-input {
+  width: 100px;
+}
+
+.hint {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+.select {
+  padding: 12px 16px;
+  background-color: var(--bg-elevated);
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  color: var(--text-primary);
+  font-size: 14px;
+  cursor: pointer;
+  min-width: 150px;
+}
+
+.select:focus {
+  outline: none;
+  border-color: var(--spotify-green);
+}
+
+.select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.results-header {
+  margin-bottom: 24px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.results-header h3 {
+  font-size: 24px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.results-subtitle {
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin-top: 8px;
+}
+
+.view-options {
+  margin: 24px 0;
+  display: flex;
+  gap: 16px;
+  padding: 24px;
+  background: linear-gradient(135deg, rgba(29, 185, 84, 0.05) 0%, var(--bg-secondary) 100%);
+  border-radius: 12px;
+  border: 2px solid rgba(29, 185, 84, 0.2);
+}
+
+.view-options .btn {
+  font-size: 16px;
+  padding: 14px 28px;
+}
+
+.track-selector-container {
+  margin-top: 32px;
+}
+
+
+.playlist-creator {
+  margin: 32px 0;
+  padding: 24px;
+  background: linear-gradient(135deg, var(--bg-secondary) 0%, var(--bg-elevated) 100%);
+  border-radius: 12px;
+  border: 1px solid var(--border-color);
+}
+
+.playlist-form {
+  display: flex;
+  gap: 16px;
+  margin-bottom: 12px;
+}
+
+.playlist-form .input {
+  flex: 1;
+}
+
+.playlist-hint {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin: 0;
+  text-align: center;
+}
+
+.btn-large {
+  padding: 14px 28px;
+  font-size: 15px;
+  font-weight: 600;
+  min-width: 200px;
+}
+
+.btn-success {
+  background-color: var(--spotify-green);
+  color: white;
+}
+
+.btn-success:hover:not(:disabled) {
+  background-color: #1ed760;
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(29, 185, 84, 0.4);
+}
+
+.empty-state {
+  text-align: center;
+  padding: 80px 20px;
+  color: var(--text-secondary);
+}
+
+.empty-state p {
+  font-size: 16px;
+  margin: 8px 0;
+}
+
+.empty-state .hint {
+  font-size: 14px;
+  margin-top: 12px;
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+.release-list {
+  display: grid;
+  gap: 16px;
+}
+
+.release-card {
+  display: flex;
+  gap: 16px;
+  padding: 16px;
+  background-color: var(--bg-secondary);
+  border-radius: 8px;
+  transition: background-color 0.2s ease;
+}
+
+.release-card:hover {
+  background-color: var(--bg-elevated);
+}
+
+.release-image {
+  width: 120px;
+  height: 120px;
+  object-fit: cover;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.release-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.release-name {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.release-artist {
+  font-size: 15px;
+  color: var(--text-secondary);
+}
+
+.release-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
+
+.release-type {
+  padding: 2px 8px;
+  background-color: var(--bg-elevated);
+  border-radius: 3px;
+  font-weight: 600;
+  font-size: 11px;
+}
+
+.release-separator {
+  opacity: 0.5;
+}
+
+.release-tracks {
+  font-size: 13px;
+}
+
+.release-date {
+  font-size: 13px;
+}
+
+.release-link {
+  margin-top: 8px;
+  font-size: 14px;
+  color: var(--spotify-green);
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.release-link:hover {
+  text-decoration: underline;
+}
+
+.empty-state {
+  text-align: center;
+  padding: 80px 20px;
+  font-size: 18px;
+  color: var(--text-secondary);
+}

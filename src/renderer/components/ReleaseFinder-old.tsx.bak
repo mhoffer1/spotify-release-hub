@@ -1,0 +1,207 @@
+import { useState, useEffect } from 'react';
+import type { ReleaseWithArtist, ProgressUpdate } from '@shared/types';
+import { DAYS_OPTIONS, DEFAULT_DAYS_BACK } from '@shared/constants';
+import './ReleaseFinder.css';
+
+function ReleaseFinder() {
+  const [daysBack, setDaysBack] = useState(DEFAULT_DAYS_BACK);
+  const [isScanning, setIsScanning] = useState(false);
+  const [isCreatingPlaylist, setIsCreatingPlaylist] = useState(false);
+  const [progress, setProgress] = useState<ProgressUpdate | null>(null);
+  const [releases, setReleases] = useState<ReleaseWithArtist[]>([]);
+  const [playlistName, setPlaylistName] = useState('');
+
+  useEffect(() => {
+    const unsubscribeScan = window.electronAPI.onScanProgress(setProgress);
+    const unsubscribeCreate = window.electronAPI.onCreatePlaylistProgress(setProgress);
+
+    return () => {
+      unsubscribeScan();
+      unsubscribeCreate();
+    };
+  }, []);
+
+  const handleScan = async () => {
+    setIsScanning(true);
+    setProgress(null);
+    setReleases([]);
+
+    const response = await window.electronAPI.scanReleases({
+      daysBack,
+      maxArtists: 0, // 0 means all artists
+    });
+
+    if (response.success && response.data) {
+      setReleases(response.data.releases);
+      const date = new Date().toISOString().split('T')[0];
+      setPlaylistName(`New Releases (last ${daysBack} days) - ${date}`);
+    } else {
+      alert(`Error: ${response.error}`);
+    }
+
+    setIsScanning(false);
+    setProgress(null);
+  };
+
+  const handleCreatePlaylist = async () => {
+    if (!playlistName.trim()) {
+      alert('Please enter a playlist name');
+      return;
+    }
+
+    if (releases.length === 0) {
+      alert('No releases to add to playlist');
+      return;
+    }
+
+    setIsCreatingPlaylist(true);
+    setProgress(null);
+
+    const response = await window.electronAPI.createPlaylist({
+      playlistName,
+      releases,
+      isPublic: false,
+    });
+
+    if (response.success && response.data) {
+      alert(
+        `Playlist created successfully!\n${response.data.tracksAdded} tracks added.\n\nOpening in Spotify...`
+      );
+      // The URL will be opened automatically by the system
+      window.open(response.data.playlistUrl, '_blank');
+    } else {
+      alert(`Error: ${response.error}`);
+    }
+
+    setIsCreatingPlaylist(false);
+    setProgress(null);
+  };
+
+  const formatDate = (dateStr: string): string => {
+    const date = new Date(dateStr);
+    return date.toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+    });
+  };
+
+  return (
+    <div className="release-finder">
+      <div className="section-header">
+        <h2>Find New Releases</h2>
+        <p>Discover recent releases from all your followed artists</p>
+      </div>
+
+      <div className="control-panel">
+        <div className="control-group">
+          <label htmlFor="days-select">Look back:</label>
+          <select
+            id="days-select"
+            className="select"
+            value={daysBack}
+            onChange={(e) => setDaysBack(Number(e.target.value))}
+            disabled={isScanning || isCreatingPlaylist}
+          >
+            {DAYS_OPTIONS.map((days) => (
+              <option key={days} value={days}>
+                {days} days
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <button
+          className="btn btn-primary"
+          onClick={handleScan}
+          disabled={isScanning || isCreatingPlaylist}
+        >
+          {isScanning ? 'Scanning...' : 'Scan for New Releases'}
+        </button>
+      </div>
+
+      {progress && (
+        <div className="progress-container">
+          <div className="progress-bar">
+            <div
+              className="progress-fill"
+              style={{ width: `${(progress.current / progress.total) * 100}%` }}
+            ></div>
+          </div>
+          <p className="progress-text">
+            {progress.message} ({progress.current}/{progress.total})
+          </p>
+        </div>
+      )}
+
+      {releases.length > 0 && (
+        <div className="results-section">
+          <div className="results-header">
+            <h3>Found {releases.length} new releases</h3>
+          </div>
+
+          <div className="playlist-creator">
+            <input
+              type="text"
+              className="input"
+              placeholder="Playlist name"
+              value={playlistName}
+              onChange={(e) => setPlaylistName(e.target.value)}
+              disabled={isCreatingPlaylist}
+            />
+            <button
+              className="btn btn-primary"
+              onClick={handleCreatePlaylist}
+              disabled={isCreatingPlaylist || !playlistName.trim()}
+            >
+              {isCreatingPlaylist ? 'Creating...' : 'Create Playlist on Spotify'}
+            </button>
+          </div>
+
+          <div className="release-list">
+            {releases.map((release) => (
+              <div key={release.id} className="release-card">
+                {release.images && release.images[0] && (
+                  <img
+                    src={release.images[0].url}
+                    alt={release.name}
+                    className="release-image"
+                  />
+                )}
+                <div className="release-info">
+                  <div className="release-name">{release.name}</div>
+                  <div className="release-artist">{release.artist_name}</div>
+                  <div className="release-meta">
+                    <span className="release-type">{release.album_type.toUpperCase()}</span>
+                    <span className="release-separator">•</span>
+                    <span className="release-date">{formatDate(release.release_date)}</span>
+                    <span className="release-separator">•</span>
+                    <span className="release-tracks">{release.total_tracks} tracks</span>
+                  </div>
+                  {release.external_urls?.spotify && (
+                    <a
+                      href={release.external_urls.spotify}
+                      className="release-link"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      View on Spotify →
+                    </a>
+                  )}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {!isScanning && releases.length === 0 && (
+        <div className="empty-state">
+          <p>👆 Select a timeframe and scan to discover new releases!</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export default ReleaseFinder;
