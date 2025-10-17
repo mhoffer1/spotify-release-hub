@@ -9,10 +9,12 @@ import type {
   ScanReleasesResponse,
   CreatePlaylistRequest,
   CreatePlaylistResponse,
-  GetTracksResponse,
   CreatePlaylistFromTracksRequest,
   SpotifyTrack,
   ProgressUpdate,
+  UpdateInfoPayload,
+  UpdateErrorPayload,
+  UpdateCheckOptions,
 } from '@shared/types';
 
 declare global {
@@ -66,6 +68,12 @@ declare global {
         data?: CreatePlaylistResponse;
         error?: string;
       }>;
+
+      // Updates
+      checkForUpdates: (options?: UpdateCheckOptions) => Promise<{ success: boolean; message?: string }>;
+      onUpdateAvailable: (callback: (info: UpdateInfoPayload) => void) => () => void;
+      onUpdateNotAvailable: (callback: () => void) => () => void;
+      onUpdateError: (callback: (error: UpdateErrorPayload) => void) => () => void;
 
       // Utilities
       openExternal: (url: string) => Promise<{ success: boolean; error?: string }>;

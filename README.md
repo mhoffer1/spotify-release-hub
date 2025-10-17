@@ -29,6 +29,11 @@
 - Dark theme optimized for music lovers
 - Responsive and intuitive interface
 
+### 🔔 **Smart Update Notifications**
+- Automatic checks for new GitHub releases when running packaged builds
+- In-app banner with release highlights and quick access to download links
+- Optional GitHub token support for private repositories or higher rate limits
+
 ---
 
 ## 📥 Download
@@ -171,8 +176,10 @@ cd spotify-release-hub
 # Install dependencies
 npm install
 
-# Create .env file with your Spotify credentials
-# Get them from: https://developer.spotify.com/dashboard
+# Copy environment template and add your Spotify credentials
+cp .env.example .env
+# Get credentials from: https://developer.spotify.com/dashboard
+# (Optional) configure GitHub update variables in .env to enable release notifications
 
 # Run in development mode
 npm run dev

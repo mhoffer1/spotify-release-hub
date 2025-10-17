@@ -112,9 +112,15 @@ export const IPC_CHANNELS = {
   // Track Management
   GET_TRACKS_FROM_ALBUMS: 'tracks:get-from-albums',
   CREATE_PLAYLIST_FROM_TRACKS: 'tracks:create-playlist',
-  
+
   // General
   ERROR: 'error',
+
+  // Updates
+  UPDATES_CHECK: 'updates:check',
+  UPDATES_AVAILABLE: 'updates:available',
+  UPDATES_NOT_AVAILABLE: 'updates:not-available',
+  UPDATES_ERROR: 'updates:error',
 } as const;
 
 // Request/Response types for IPC
@@ -178,4 +184,19 @@ export interface ProgressUpdate {
   current: number;
   total: number;
   message: string;
+}
+
+export interface UpdateInfoPayload {
+  version: string;
+  releaseNotes?: string;
+  publishedAt?: string;
+  url: string;
+}
+
+export interface UpdateErrorPayload {
+  message: string;
+}
+
+export interface UpdateCheckOptions {
+  silent?: boolean;
 }
