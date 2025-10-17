@@ -18,6 +18,7 @@
     "dist:portable": "npm run build && electron-builder --win portable",
     "dist:mac": "npm run build && electron-builder --mac",
     "dist:linux": "npm run build && electron-builder --linux",
+    "publish:win": "npm run build && electron-builder --win --publish always",
     "lint": "eslint . --ext .ts,.tsx"
   },
   "keywords": [

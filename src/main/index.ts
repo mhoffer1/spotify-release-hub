@@ -1,6 +1,5 @@
 import dotenv from 'dotenv';
 import fs from 'fs';
-import axios from 'axios';
 import { app, BrowserWindow, ipcMain, shell, IpcMainInvokeEvent, dialog } from 'electron';
 import * as path from 'path';
 import { SpotifyService } from './services/SpotifyService';
@@ -18,7 +17,7 @@ import type {
   ScanReleasesRequest,
   CreatePlaylistRequest,
 } from '../shared/types';
-import { autoUpdater, UpdateInfo, ProgressInfo } from 'electron-updater';
+import { autoUpdater, UpdateInfo } from 'electron-updater';
 
 // Load environment variables with support for packaged builds
 function loadEnvironmentVariables() {
@@ -70,27 +69,6 @@ const updateConfig = {
   personalAccessToken: process.env.GITHUB_UPDATES_TOKEN || process.env.GITHUB_TOKEN,
 };
 
-let lastNotifiedVersion: string | null = null;
-let scheduledUpdateCheck: NodeJS.Timeout | null = null;
-
-function normalizeVersion(version: string) {
-  return version.replace(/^v/i, '').trim();
-}
-
-function compareSemver(a: string, b: string) {
-  const aParts = normalizeVersion(a).split('.').map((part) => parseInt(part, 10) || 0);
-  const bParts = normalizeVersion(b).split('.').map((part) => parseInt(part, 10) || 0);
-
-  const maxLength = Math.max(aParts.length, bParts.length);
-  for (let i = 0; i < maxLength; i++) {
-    const aValue = aParts[i] ?? 0;
-    const bValue = bParts[i] ?? 0;
-    if (aValue > bValue) return 1;
-    if (aValue < bValue) return -1;
-  }
-  return 0;
-}
-
 type IpcChannel = (typeof IPC_CHANNELS)[keyof typeof IPC_CHANNELS];
 
 function sendToRenderer(channel: IpcChannel, payload: unknown) {
@@ -108,22 +86,6 @@ async function checkForUpdates(triggeredByUser = false) {
       } satisfies UpdateErrorPayload);
     }
   }
-}
-
-function scheduleUpdateChecks() {
-  if (scheduledUpdateCheck) {
-    clearInterval(scheduledUpdateCheck);
-  }
-
-  if (!app.isPackaged) {
-    return;
-  }
-
-  // Check on startup and then every 6 hours
-  checkForUpdates(false);
-  scheduledUpdateCheck = setInterval(() => {
-    checkForUpdates(false);
-  }, 1000 * 60 * 60 * 6);
 }
 
 function createWindow() {
@@ -209,10 +171,7 @@ app.on('window-all-closed', () => {
 });
 
 app.on('before-quit', () => {
-  if (scheduledUpdateCheck) {
-    clearInterval(scheduledUpdateCheck);
-    scheduledUpdateCheck = null;
-  }
+  // No need to clear interval as it's not set anymore
 });
 
 autoUpdater.on('update-available', (info: UpdateInfo) => {
@@ -234,7 +193,7 @@ autoUpdater.on('error', (err: Error) => {
   } as UpdateErrorPayload);
 });
 
-autoUpdater.on('download-progress', (progressObj: ProgressInfo) => {
+autoUpdater.on('download-progress', () => {
   // This can be used to show a download progress bar
 });
 
