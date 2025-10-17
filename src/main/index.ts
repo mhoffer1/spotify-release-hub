@@ -18,6 +18,7 @@ import type {
   ScanReleasesRequest,
   CreatePlaylistRequest,
 } from '../shared/types';
+import { autoUpdater, UpdateInfo, ProgressInfo } from 'electron-updater';
 
 // Load environment variables with support for packaged builds
 function loadEnvironmentVariables() {
@@ -53,6 +54,8 @@ function loadEnvironmentVariables() {
 }
 
 loadEnvironmentVariables();
+
+autoUpdater.logger = console;
 
 let mainWindow: BrowserWindow | null = null;
 let spotifyService: SpotifyService | null = null;
@@ -96,72 +99,14 @@ function sendToRenderer(channel: IpcChannel, payload: unknown) {
 }
 
 async function checkForUpdates(triggeredByUser = false) {
-  if (!mainWindow) {
-    return { success: false, message: 'Main window not ready' };
-  }
-
-  if (!updateConfig.owner || !updateConfig.repo) {
+  if (app.isPackaged) {
+    autoUpdater.checkForUpdatesAndNotify();
+  } else {
     if (triggeredByUser) {
       sendToRenderer(IPC_CHANNELS.UPDATES_ERROR, {
-        message: 'Update repository is not configured. Set GITHUB_UPDATES_OWNER and GITHUB_UPDATES_REPO.',
+        message: 'Auto-updates are only available in the packaged application.',
       } satisfies UpdateErrorPayload);
     }
-    return { success: false, message: 'Updates not configured' };
-  }
-
-  try {
-    const headers: Record<string, string> = {
-      'User-Agent': app.getName(),
-    };
-
-    if (updateConfig.personalAccessToken) {
-      headers.Authorization = `token ${updateConfig.personalAccessToken}`;
-    }
-
-    const response = await axios.get(
-      `${updateConfig.apiBaseUrl}/repos/${updateConfig.owner}/${updateConfig.repo}/releases/latest`,
-      {
-        headers,
-        timeout: 10000,
-      }
-    );
-
-    const latestRelease = response.data;
-    const latestVersion: string = normalizeVersion(latestRelease.tag_name || latestRelease.name || '');
-    const currentVersion = normalizeVersion(app.getVersion());
-
-    if (!latestVersion) {
-      throw new Error('Latest release response did not contain a version tag.');
-    }
-
-    if (compareSemver(latestVersion, currentVersion) <= 0) {
-      if (triggeredByUser) {
-        sendToRenderer(IPC_CHANNELS.UPDATES_NOT_AVAILABLE, {});
-      }
-      return { success: true, message: 'Already on latest version' };
-    }
-
-    if (lastNotifiedVersion === latestVersion && !triggeredByUser) {
-      return { success: true, message: 'Update already notified' };
-    }
-
-    const payload: UpdateInfoPayload = {
-      version: latestVersion,
-      releaseNotes: latestRelease.body || undefined,
-      publishedAt: latestRelease.published_at || undefined,
-      url: latestRelease.html_url,
-    };
-
-    sendToRenderer(IPC_CHANNELS.UPDATES_AVAILABLE, payload);
-    lastNotifiedVersion = latestVersion;
-    return { success: true };
-  } catch (error) {
-    console.error('[updates] Failed to check for updates:', error);
-    const message = error instanceof Error ? error.message : 'Unknown error while checking updates';
-    if (triggeredByUser) {
-      sendToRenderer(IPC_CHANNELS.UPDATES_ERROR, { message } satisfies UpdateErrorPayload);
-    }
-    return { success: false, message };
   }
 }
 
@@ -171,11 +116,6 @@ function scheduleUpdateChecks() {
   }
 
   if (!app.isPackaged) {
-    return;
-  }
-
-  if (!updateConfig.owner || !updateConfig.repo) {
-    console.warn('[updates] Skipping automatic update checks - repository not configured');
     return;
   }
 
@@ -248,7 +188,12 @@ app.whenReady().then(() => {
     dialog.showErrorBox('Configuration error', startupError.message);
   }
 
-  scheduleUpdateChecks();
+  if (app.isPackaged) {
+    autoUpdater.checkForUpdatesAndNotify();
+    setInterval(() => {
+      autoUpdater.checkForUpdatesAndNotify();
+    }, 1000 * 60 * 60 * 6); // Check every 6 hours
+  }
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -268,6 +213,45 @@ app.on('before-quit', () => {
     clearInterval(scheduledUpdateCheck);
     scheduledUpdateCheck = null;
   }
+});
+
+autoUpdater.on('update-available', (info: UpdateInfo) => {
+  sendToRenderer(IPC_CHANNELS.UPDATES_AVAILABLE, {
+    version: info.version,
+    releaseNotes: info.releaseNotes,
+    publishedAt: info.releaseDate,
+    url: `https://github.com/${updateConfig.owner}/${updateConfig.repo}/releases/latest`,
+  } as UpdateInfoPayload);
+});
+
+autoUpdater.on('update-not-available', () => {
+  sendToRenderer(IPC_CHANNELS.UPDATES_NOT_AVAILABLE, {});
+});
+
+autoUpdater.on('error', (err: Error) => {
+  sendToRenderer(IPC_CHANNELS.UPDATES_ERROR, {
+    message: err.message,
+  } as UpdateErrorPayload);
+});
+
+autoUpdater.on('download-progress', (progressObj: ProgressInfo) => {
+  // This can be used to show a download progress bar
+});
+
+autoUpdater.on('update-downloaded', () => {
+  // Prompt the user to restart the app
+  dialog
+    .showMessageBox({
+      type: 'info',
+      title: 'Update Ready',
+      message: 'A new version has been downloaded. Restart the application to apply the updates.',
+      buttons: ['Restart', 'Later'],
+    })
+    .then((buttonIndex) => {
+      if (buttonIndex.response === 0) {
+        autoUpdater.quitAndInstall();
+      }
+    });
 });
 
 // IPC Handlers
@@ -447,8 +431,7 @@ ipcMain.handle(IPC_CHANNELS.CREATE_PLAYLIST_FROM_TRACKS, async (_event: IpcMainI
 });
 
 ipcMain.handle(IPC_CHANNELS.UPDATES_CHECK, async (_event, options: UpdateCheckOptions = {}) => {
-  const silent = options.silent ?? false;
-  return checkForUpdates(!silent);
+  checkForUpdates(!options.silent);
 });
 
 // Handle opening external URLs
