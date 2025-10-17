@@ -53,9 +53,17 @@
     "dotenv": "^17.2.3",
     "electron-store": "^8.1.0",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0"
+    "react-dom": "^18.2.0",
+    "electron-updater": "^6.1.1"
   },
   "build": {
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "mhoffer1",
+        "repo": "spotify-release-hub"
+      }
+    ],
     "appId": "com.spotifyreleasehub.app",
     "productName": "Spotify Release Hub",
     "directories": {
