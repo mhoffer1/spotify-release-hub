@@ -13,19 +13,6 @@ export interface SpotifyArtist {
   }>;
 }
 
-export interface SpotifyTrack {
-  id: string;
-  name: string;
-  artists: SpotifyArtist[];
-  album?: SpotifyAlbum;
-  duration_ms: number;
-  external_urls?: {
-    spotify?: string;
-  };
-  preview_url?: string | null;
-  uri?: string;
-}
-
 export interface SpotifyAlbum {
   id: string;
   name: string;
@@ -108,10 +95,6 @@ export const IPC_CHANNELS = {
   CREATE_PLAYLIST: 'releases:create-playlist',
   CREATE_PLAYLIST_PROGRESS: 'releases:create-playlist:progress',
   CREATE_PLAYLIST_COMPLETE: 'releases:create-playlist:complete',
-  
-  // Track Management
-  GET_TRACKS_FROM_ALBUMS: 'tracks:get-from-albums',
-  CREATE_PLAYLIST_FROM_TRACKS: 'tracks:create-playlist',
 
   // General
   ERROR: 'error',
@@ -164,20 +147,6 @@ export interface CreatePlaylistResponse {
   playlistUrl: string;
   playlistId: string;
   tracksAdded: number;
-}
-
-export interface GetTracksRequest {
-  albumIds: string[];
-}
-
-export interface GetTracksResponse {
-  tracks: SpotifyTrack[];
-}
-
-export interface CreatePlaylistFromTracksRequest {
-  playlistName: string;
-  trackUris: string[];
-  isPublic: boolean;
 }
 
 export interface ProgressUpdate {

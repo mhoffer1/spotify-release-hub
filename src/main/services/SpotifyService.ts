@@ -13,13 +13,11 @@ import type {
   ReleaseWithArtist,
   ScanReleasesResponse,
   SpotifyArtist,
-  SpotifyTrack,
   UnfollowedArtist,
 } from '../../shared/types';
 import {
   CHUNK_SIZE_FOLLOW,
   CHUNK_SIZE_PLAYLIST_ADD,
-  CHUNK_SIZE_TRACK_DETAILS,
   DEFAULT_DELAY_MS,
   MAX_DYNAMIC_DELAY_MS,
   MAX_RATE_LIMIT_WAIT_SECONDS,
@@ -767,101 +765,4 @@ export class SpotifyService {
     return url;
   }
 
-  async getTracksFromAlbums(
-    albumIds: string[],
-    onProgress?: (progress: ProgressUpdate) => void
-  ): Promise<SpotifyTrack[]> {
-    const trackMap = await this.getAlbumTrackMap(albumIds, onProgress);
-    const uniqueTrackIds = new Set<string>();
-    for (const ids of trackMap.values()) {
-      ids.forEach((id) => uniqueTrackIds.add(id));
-    }
-
-    const trackIds = Array.from(uniqueTrackIds);
-    if (trackIds.length === 0) {
-      return [];
-    }
-
-    const allTracks: SpotifyTrack[] = [];
-    const totalChunks = Math.ceil(trackIds.length / CHUNK_SIZE_TRACK_DETAILS);
-
-    for (let i = 0; i < trackIds.length; i += CHUNK_SIZE_TRACK_DETAILS) {
-      const chunkIndex = Math.floor(i / CHUNK_SIZE_TRACK_DETAILS) + 1;
-      const chunk = trackIds.slice(i, i + CHUNK_SIZE_TRACK_DETAILS);
-
-      onProgress?.({
-        current: trackMap.size + chunkIndex,
-        total: trackMap.size + totalChunks,
-        message: `Fetching track details (${chunkIndex}/${totalChunks})...`,
-      });
-
-      const response = await this.apiCallWithRetry(() =>
-        this.api.get('/tracks', {
-          params: {
-            ids: chunk.join(','),
-            market: 'US',
-          },
-        })
-      );
-
-      if (Array.isArray(response.data.tracks)) {
-        for (const track of response.data.tracks) {
-          if (track) {
-            allTracks.push(track as SpotifyTrack);
-          }
-        }
-      }
-    }
-
-    return allTracks;
-  }
-
-  async createPlaylistFromTracks(
-    playlistName: string,
-    trackUris: string[],
-    isPublic: boolean,
-    onProgress?: (progress: ProgressUpdate) => void
-  ): Promise<{ playlistUrl: string; playlistId: string; tracksAdded: number }> {
-    onProgress?.({ current: 0, total: 3, message: 'Getting user info...' });
-    const userResponse = await this.apiCallWithRetry(() => this.api.get('/me'));
-    const userId = userResponse.data.id;
-
-    onProgress?.({ current: 1, total: 3, message: 'Creating playlist...' });
-    const playlistResponse = await this.apiCallWithRetry(() =>
-      this.api.post(`/users/${userId}/playlists`, {
-        name: playlistName,
-        description: `Created by Spotify Release Hub on ${new Date().toLocaleDateString()}`,
-        public: isPublic,
-      })
-    );
-
-    const playlistId = playlistResponse.data.id;
-    const playlistUrl = playlistResponse.data.external_urls.spotify;
-
-    onProgress?.({ current: 2, total: 3, message: 'Adding tracks to playlist...' });
-    const chunkSize = 100;
-    let tracksAdded = 0;
-
-    for (let i = 0; i < trackUris.length; i += chunkSize) {
-      const chunk = trackUris.slice(i, i + chunkSize);
-
-      await this.apiCallWithRetry(() =>
-        this.api.post(`/playlists/${playlistId}/tracks`, {
-          uris: chunk,
-        })
-      );
-
-      tracksAdded += chunk.length;
-
-      onProgress?.({
-        current: 2,
-        total: 3,
-        message: `Added ${tracksAdded}/${trackUris.length} tracks...`,
-      });
-    }
-
-    onProgress?.({ current: 3, total: 3, message: 'Playlist created!' });
-
-    return { playlistUrl, playlistId, tracksAdded };
-  }
 }

@@ -9,8 +9,6 @@ import type {
   ScanReleasesResponse,
   CreatePlaylistRequest,
   CreatePlaylistResponse,
-  CreatePlaylistFromTracksRequest,
-  SpotifyTrack,
   ProgressUpdate,
   UpdateInfoPayload,
   UpdateErrorPayload,
@@ -56,18 +54,6 @@ declare global {
         error?: string;
       }>;
       onCreatePlaylistProgress: (callback: (progress: ProgressUpdate) => void) => () => void;
-
-      // Track Management
-      getTracksFromAlbums: (albumIds: string[]) => Promise<{
-        success: boolean;
-        data?: SpotifyTrack[];
-        error?: string;
-      }>;
-      createPlaylistFromTracks: (request: CreatePlaylistFromTracksRequest) => Promise<{
-        success: boolean;
-        data?: CreatePlaylistResponse;
-        error?: string;
-      }>;
 
       // Updates
       checkForUpdates: (options?: UpdateCheckOptions) => Promise<{ success: boolean; message?: string }>;

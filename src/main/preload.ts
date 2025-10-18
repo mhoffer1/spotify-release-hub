@@ -23,9 +23,6 @@ const IPC_CHANNELS = {
   CREATE_PLAYLIST: 'releases:create-playlist',
   CREATE_PLAYLIST_PROGRESS: 'releases:create-playlist:progress',
   CREATE_PLAYLIST_COMPLETE: 'releases:create-playlist:complete',
-  // Track management
-  GET_TRACKS_FROM_ALBUMS: 'tracks:get-from-albums',
-  CREATE_PLAYLIST_FROM_TRACKS: 'tracks:create-playlist',
   // Updates
   UPDATES_CHECK: 'updates:check',
   UPDATES_AVAILABLE: 'updates:available',
@@ -44,11 +41,9 @@ import type {
   ScanReleasesResponse,
   CreatePlaylistRequest,
   CreatePlaylistResponse,
-  CreatePlaylistFromTracksRequest,
   ProgressUpdate,
   UpdateInfoPayload,
   UpdateErrorPayload,
-  SpotifyTrack,
   UpdateCheckOptions,
 } from '../shared/types';
 
@@ -94,13 +89,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onCreatePlaylistProgress: (callback: (progress: ProgressUpdate) => void): Unsubscribe =>
     subscribe(IPC_CHANNELS.CREATE_PLAYLIST_PROGRESS, callback),
 
-  // Track management
-  getTracksFromAlbums: (albumIds: string[]): InvokeResult<SpotifyTrack[]> =>
-    ipcRenderer.invoke(IPC_CHANNELS.GET_TRACKS_FROM_ALBUMS, albumIds),
-  createPlaylistFromTracks: (
-    request: CreatePlaylistFromTracksRequest
-  ): InvokeResult<CreatePlaylistResponse> => ipcRenderer.invoke(IPC_CHANNELS.CREATE_PLAYLIST_FROM_TRACKS, request),
-
   // Updates
   checkForUpdates: (options?: UpdateCheckOptions): UpdateCheckResult =>
     ipcRenderer.invoke(IPC_CHANNELS.UPDATES_CHECK, options),
@@ -133,8 +121,6 @@ declare global {
       onScanProgress: (callback: (progress: ProgressUpdate) => void) => Unsubscribe;
       createPlaylist: (request: CreatePlaylistRequest) => InvokeResult<CreatePlaylistResponse>;
       onCreatePlaylistProgress: (callback: (progress: ProgressUpdate) => void) => Unsubscribe;
-      getTracksFromAlbums: (albumIds: string[]) => InvokeResult<SpotifyTrack[]>;
-      createPlaylistFromTracks: (request: CreatePlaylistFromTracksRequest) => InvokeResult<CreatePlaylistResponse>;
       checkForUpdates: (options?: UpdateCheckOptions) => UpdateCheckResult;
       onUpdateAvailable: (callback: (info: UpdateInfoPayload) => void) => Unsubscribe;
       onUpdateNotAvailable: (callback: () => void) => Unsubscribe;

@@ -351,52 +351,6 @@ ipcMain.handle(IPC_CHANNELS.CREATE_PLAYLIST, async (_event: IpcMainInvokeEvent, 
     return { success: false, error: (error as Error).message };
   }
 });
-
-// Get tracks from albums
-ipcMain.handle(IPC_CHANNELS.GET_TRACKS_FROM_ALBUMS, async (_event: IpcMainInvokeEvent, albumIds: string[]) => {
-  try {
-    if (!spotifyService) {
-      throw new Error('Not authenticated');
-    }
-
-    console.log('[IPC] Getting tracks from albums:', albumIds.length);
-
-    const tracks = await spotifyService.getTracksFromAlbums(albumIds, (progress: ProgressUpdate) => {
-      mainWindow?.webContents.send(IPC_CHANNELS.SCAN_RELEASES_PROGRESS, progress);
-    });
-
-    return { success: true, data: tracks };
-  } catch (error) {
-    console.error('Get tracks error:', error);
-    return { success: false, error: (error as Error).message };
-  }
-});
-
-// Create playlist from track URIs
-ipcMain.handle(IPC_CHANNELS.CREATE_PLAYLIST_FROM_TRACKS, async (_event: IpcMainInvokeEvent, request: any) => {
-  try {
-    if (!spotifyService) {
-      throw new Error('Not authenticated');
-    }
-
-    console.log('[IPC] Creating playlist from tracks:', request.trackUris.length);
-
-    const result = await spotifyService.createPlaylistFromTracks(
-      request.playlistName,
-      request.trackUris,
-      request.isPublic || false,
-      (progress: ProgressUpdate) => {
-        mainWindow?.webContents.send(IPC_CHANNELS.CREATE_PLAYLIST_PROGRESS, progress);
-      }
-    );
-
-    return { success: true, data: result };
-  } catch (error) {
-    console.error('Create playlist from tracks error:', error);
-    return { success: false, error: (error as Error).message };
-  }
-});
-
 ipcMain.handle(IPC_CHANNELS.UPDATES_CHECK, async (_event, options: UpdateCheckOptions = {}) => {
   checkForUpdates(!options.silent);
 });

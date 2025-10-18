@@ -1,6 +1,6 @@
 {
   "name": "spotify-release-hub",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "A desktop power tool for Spotify - Follow artists from playlists and discover new releases",
   "main": "dist/main/index.js",
   "scripts": {
@@ -10,7 +10,7 @@
     "dev:electron": "cross-env NODE_ENV=development electron .",
     "build": "npm run build:renderer && npm run build:main",
     "build:renderer": "vite build",
-  "build:main": "tsc -p tsconfig.main.json",
+    "build:main": "tsc -p tsconfig.main.json",
     "start": "electron .",
     "package": "npm run build && electron-packager . \"Spotify Release Hub\" --platform=win32 --arch=x64 --out=release --overwrite --ignore=\"node_modules/(vite|@vitejs|eslint|concurrently)\" --ignore=\"src\"",
     "dist": "npm run build && electron-builder",
@@ -32,7 +32,7 @@
   "author": "Your Name",
   "license": "MIT",
   "devDependencies": {
-    "@types/node": "^20.10.0",
+    "@types/node": "^24.8.1",
     "@types/react": "^18.2.45",
     "@types/react-dom": "^18.2.18",
     "@typescript-eslint/eslint-plugin": "^6.15.0",
@@ -41,7 +41,7 @@
     "concurrently": "^8.2.2",
     "cross-env": "^10.1.0",
     "electron": "^28.0.0",
-    "electron-builder": "^24.13.3",
+    "electron-builder": "^26.0.12",
     "electron-packager": "^17.1.2",
     "eslint": "^8.56.0",
     "eslint-plugin-react": "^7.33.2",
@@ -54,9 +54,9 @@
     "axios": "^1.6.2",
     "dotenv": "^17.2.3",
     "electron-store": "^8.1.0",
+    "electron-updater": "^6.1.1",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "electron-updater": "^6.1.1"
+    "react-dom": "^18.2.0"
   },
   "build": {
     "publish": [

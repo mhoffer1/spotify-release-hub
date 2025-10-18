@@ -1,7 +1,6 @@
 import { useState, useEffect } from 'react';
 import type { ReleaseWithArtist, ProgressUpdate } from '@shared/types';
 import { DAYS_OPTIONS, DEFAULT_DAYS_BACK } from '@shared/constants';
-import TrackSelector from './TrackSelector';
 import './ReleaseFinder.css';
 
 function ReleaseFinder() {
@@ -11,11 +10,19 @@ function ReleaseFinder() {
   const [isCreatingPlaylist, setIsCreatingPlaylist] = useState(false);
   const [progress, setProgress] = useState<ProgressUpdate | null>(null);
   const [releases, setReleases] = useState<ReleaseWithArtist[]>([]);
-  const [tracks, setTracks] = useState<any[]>([]);
   const [playlistName, setPlaylistName] = useState('');
   const [testMode, setTestMode] = useState(false);
   const [canCancel, setCanCancel] = useState(false);
-  const [showTrackSelector, setShowTrackSelector] = useState(false);
+  const [playlistSummary, setPlaylistSummary] = useState<{
+    name: string;
+    url?: string;
+    tracksAdded?: number;
+  } | null>(null);
+
+  const generateDefaultPlaylistName = () => {
+    const date = new Date().toISOString().split('T')[0];
+    return `New Releases - ${date}`;
+  };
 
   useEffect(() => {
     const unsubscribeScan = window.electronAPI.onScanProgress((p: ProgressUpdate) => {
@@ -31,11 +38,19 @@ function ReleaseFinder() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!playlistName) {
+      setPlaylistName(generateDefaultPlaylistName());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const handleScan = async () => {
     setIsScanning(true);
     setCanCancel(true);
     setProgress(null);
     setReleases([]);
+    setPlaylistSummary(null);
 
     const effectiveMaxArtists = testMode && maxArtists > 0 ? maxArtists : 0;
     console.log('[ReleaseFinder] Scanning with params:', { daysBack, testMode, maxArtists, effectiveMaxArtists });
@@ -51,12 +66,19 @@ function ReleaseFinder() {
         requestedMaxArtists: effectiveMaxArtists
       });
       setReleases(response.data.releases);
-      const date = new Date().toISOString().split('T')[0];
-      const artistText = testMode && maxArtists > 0 ? ` (${maxArtists} artists)` : '';
-      setPlaylistName(`New Releases${artistText} - ${date}`);
-      
-      // Fetch full track details for all albums
-      await fetchTracksFromReleases(response.data.releases);
+
+      if (response.data.releases.length === 0) {
+        alert('No new releases found for the selected timeframe.');
+        setIsScanning(false);
+        setCanCancel(false);
+        return;
+      }
+
+      const defaultName = generateDefaultPlaylistName();
+      const finalPlaylistName = playlistName.trim() || defaultName;
+      setPlaylistName(finalPlaylistName);
+
+      await createPlaylistFromReleases(response.data.releases, finalPlaylistName);
     } else {
       alert(`Error: ${response.error}`);
     }
@@ -66,39 +88,32 @@ function ReleaseFinder() {
     // Don't clear progress here - keep it visible across tabs
   };
 
-  const fetchTracksFromReleases = async (releases: ReleaseWithArtist[]) => {
-    // Fetch tracks from Spotify Web API
-    const albumIds = releases.map(r => r.id);
-    console.log('[ReleaseFinder] Fetching tracks from', albumIds.length, 'albums');
-    
-    const fetchedTracks = await window.electronAPI.getTracksFromAlbums(albumIds);
-    if (fetchedTracks.success && fetchedTracks.data) {
-      console.log('[ReleaseFinder] Got', fetchedTracks.data.length, 'tracks');
-      setTracks(fetchedTracks.data);
-      setShowTrackSelector(true);
-    } else {
-      console.error('[ReleaseFinder] Failed to fetch tracks:', fetchedTracks.error);
-      alert(`Error fetching tracks: ${fetchedTracks.error}`);
-    }
-  };
-
-  const handleExportCustomPlaylist = async (trackUris: string[], customPlaylistName: string) => {
+  const createPlaylistFromReleases = async (releaseData: ReleaseWithArtist[], finalName: string) => {
     setIsCreatingPlaylist(true);
     setCanCancel(true);
-    
-    const response = await window.electronAPI.createPlaylistFromTracks({
-      playlistName: customPlaylistName,
-      trackUris,
+    setProgress(null);
+
+    const response = await window.electronAPI.createPlaylist({
+      playlistName: finalName,
+      releases: releaseData,
       isPublic: false,
     });
 
     if (response.success && response.data) {
-      alert(`Playlist created successfully!\n\n${response.data.tracksAdded} tracks added\n${customPlaylistName}\n\nOpening in Spotify...`);
+      alert(
+        `Playlist created successfully!\n\n${response.data.tracksAdded} tracks added\n${finalName}\n\nOpening in Spotify...`
+      );
       if (response.data.playlistUrl) {
         window.open(response.data.playlistUrl, '_blank');
       }
+      setPlaylistSummary({
+        name: finalName,
+        url: response.data.playlistUrl,
+        tracksAdded: response.data.tracksAdded,
+      });
     } else {
       alert(`Error: ${response.error}`);
+      setPlaylistSummary(null);
     }
 
     setIsCreatingPlaylist(false);
@@ -112,44 +127,6 @@ function ReleaseFinder() {
     setCanCancel(false);
     setProgress(null);
     alert('Operation cancelled. Note: Background process may still complete.');
-  };
-
-  const handleCreatePlaylist = async () => {
-    if (!playlistName.trim()) {
-      alert('Please enter a playlist name');
-      return;
-    }
-
-    if (releases.length === 0) {
-      alert('No releases to add to playlist');
-      return;
-    }
-
-    setIsCreatingPlaylist(true);
-    setCanCancel(true);
-    setProgress(null);
-
-    const response = await window.electronAPI.createPlaylist({
-      playlistName,
-      releases,
-      isPublic: false,
-    });
-
-    if (response.success && response.data) {
-      alert(
-        `Playlist created successfully!\n\n${response.data.tracksAdded} tracks added\n${playlistName}\n\nOpening in Spotify...`
-      );
-      // The URL will be opened automatically by the system
-      if (response.data.playlistUrl) {
-        window.open(response.data.playlistUrl, '_blank');
-      }
-    } else {
-      alert(`Error: ${response.error}`);
-    }
-
-    setIsCreatingPlaylist(false);
-    setCanCancel(false);
-    setProgress(null);
   };
 
   const formatDate = (dateStr: string): string => {
@@ -243,34 +220,38 @@ function ReleaseFinder() {
           </div>
         )}
 
+        <div className="control-group">
+          <label htmlFor="playlist-name">Playlist name:</label>
+          <input
+            id="playlist-name"
+            type="text"
+            className="input"
+            placeholder="New Releases - YYYY-MM-DD"
+            value={playlistName}
+            onChange={(e) => setPlaylistName(e.target.value)}
+            disabled={isLoading}
+          />
+          <span className="hint">Playlist will be created automatically after scan</span>
+        </div>
+
         <button
           className="btn btn-primary"
           onClick={handleScan}
           disabled={isLoading}
         >
-          {isScanning ? 'Scanning...' : 'Scan for New Releases'}
+          {isScanning || isCreatingPlaylist ? 'Processing...' : 'Scan & Create Playlist'}
         </button>
       </div>
 
-      {releases.length > 0 && !showTrackSelector && (
+      {releases.length > 0 && (
         <div className="results-section">
           <div className="results-header">
             <h3>
               Found {releases.length} new release{releases.length !== 1 ? 's' : ''}
             </h3>
             <p className="results-subtitle">
-              Review the releases below. Load tracks to preview songs and select specific tracks, or create a playlist with all releases.
+              Playlist <strong>{playlistSummary?.name || playlistName}</strong> was created automatically with these releases.
             </p>
-          </div>
-
-          <div className="view-options">
-            <button
-              className="btn btn-primary"
-              onClick={() => fetchTracksFromReleases(releases)}
-              disabled={isLoading}
-            >
-              Load Tracks for Preview & Selection
-            </button>
           </div>
 
           <div className="release-list">
@@ -308,44 +289,26 @@ function ReleaseFinder() {
             ))}
           </div>
 
-          <div className="playlist-creator">
-            <div className="playlist-form">
-              <input
-                type="text"
-                className="input"
-                placeholder="Enter playlist name..."
-                value={playlistName}
-                onChange={(e) => setPlaylistName(e.target.value)}
-                disabled={isCreatingPlaylist}
-              />
-              <button
-                className="btn btn-success btn-large"
-                onClick={handleCreatePlaylist}
-                disabled={isCreatingPlaylist || !playlistName.trim()}
-              >
-                {isCreatingPlaylist ? 'Creating Playlist...' : 'Create Playlist on Spotify'}
-              </button>
+          {playlistSummary && (
+            <div className="playlist-creator">
+              <div className="playlist-summary">
+                <p>
+                  Added <strong>{playlistSummary.tracksAdded ?? releases.length}</strong> tracks to playlist{' '}
+                  <strong>{playlistSummary.name}</strong>.
+                </p>
+                {playlistSummary.url && (
+                  <a
+                    href={playlistSummary.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="release-link"
+                  >
+                    Open playlist in Spotify →
+                  </a>
+                )}
+              </div>
             </div>
-            <p className="playlist-hint">
-              This will create a new playlist on your Spotify account with all {releases.length} releases
-            </p>
-          </div>
-        </div>
-      )}
-
-      {showTrackSelector && tracks.length > 0 && (
-        <div className="track-selector-container">
-          <button
-            className="btn btn-secondary"
-            onClick={() => setShowTrackSelector(false)}
-            style={{ marginBottom: '16px' }}
-          >
-            ← Back to Releases
-          </button>
-          <TrackSelector
-            tracks={tracks}
-            onExportPlaylist={handleExportCustomPlaylist}
-          />
+          )}
         </div>
       )}
 
