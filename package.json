@@ -10,7 +10,7 @@
     "dev:electron": "cross-env NODE_ENV=development electron .",
     "build": "npm run build:renderer && npm run build:main",
     "build:renderer": "vite build",
-    "build:main": "tsc -p tsconfig.main.json",
+  "build:main": "tsc -p tsconfig.main.json",
     "start": "electron .",
     "package": "npm run build && electron-packager . \"Spotify Release Hub\" --platform=win32 --arch=x64 --out=release --overwrite --ignore=\"node_modules/(vite|@vitejs|eslint|concurrently)\" --ignore=\"src\"",
     "dist": "npm run build && electron-builder",
@@ -19,6 +19,7 @@
     "dist:mac": "npm run build && electron-builder --mac",
     "dist:linux": "npm run build && electron-builder --linux",
     "publish:win": "npm run build && electron-builder --win --publish always",
+    "encrypt:env": "node scripts/encrypt-env.js",
     "lint": "eslint . --ext .ts,.tsx"
   },
   "keywords": [
@@ -78,11 +79,8 @@
     ],
     "extraResources": [
       {
-        "from": ".env",
-        "to": ".env",
-        "filter": [
-          "**/*"
-        ]
+        "from": "config/credentials.enc",
+        "to": "config/credentials.enc"
       }
     ],
     "win": {
