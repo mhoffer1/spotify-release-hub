@@ -1,103 +1,248 @@
-import axios, { AxiosInstance, AxiosError } from 'axios';
+import axios, {
+  AxiosError,
+  AxiosInstance,
+  AxiosResponse,
+  InternalAxiosRequestConfig,
+} from 'axios';
 import type {
+  AnalyzePlaylistResponse,
   AuthTokens,
+  CreatePlaylistResponse,
+  FollowArtistsResponse,
+  ProgressUpdate,
+  ReleaseWithArtist,
+  ScanReleasesResponse,
   SpotifyArtist,
   SpotifyTrack,
   UnfollowedArtist,
-  ReleaseWithArtist,
-  AnalyzePlaylistResponse,
-  FollowArtistsResponse,
-  ScanReleasesResponse,
-  CreatePlaylistResponse,
-  ProgressUpdate,
 } from '../../shared/types';
 import {
-  SPOTIFY_API_BASE_URL,
-  DEFAULT_DELAY_MS,
-  RATE_LIMIT_RETRY_DEFAULT,
   CHUNK_SIZE_FOLLOW,
   CHUNK_SIZE_PLAYLIST_ADD,
+  CHUNK_SIZE_TRACK_DETAILS,
+  DEFAULT_DELAY_MS,
+  MAX_DYNAMIC_DELAY_MS,
+  MAX_RATE_LIMIT_WAIT_SECONDS,
+  MAX_REQUESTS_PER_INTERVAL,
+  RATE_LIMIT_RETRY_DEFAULT,
+  REQUEST_INTERVAL_MS,
+  SPOTIFY_API_BASE_URL,
 } from '../../shared/constants';
+import { AuthService } from './AuthService';
+
+type AlbumTracksSummary = {
+  items: Array<{ id: string | null }>;
+  next?: string | null;
+  total: number;
+};
+
+type AlbumWithTracks = {
+  id: string;
+  name?: string;
+  tracks?: AlbumTracksSummary;
+};
 
 export class SpotifyService {
   private api: AxiosInstance;
 
-  constructor(tokens: AuthTokens) {
+  private tokens: AuthTokens;
+
+  private tokenRefreshPromise: Promise<AuthTokens | null> | null = null;
+
+  private authService: AuthService;
+
+  private requestTimestamps: number[] = [];
+
+  private currentDelayMs = DEFAULT_DELAY_MS;
+
+  private albumTrackCache = new Map<string, string[]>();
+
+  constructor(tokens: AuthTokens, authService: AuthService) {
+    this.tokens = tokens;
+    this.authService = authService;
     this.api = axios.create({
       baseURL: SPOTIFY_API_BASE_URL,
       headers: {
         Authorization: `Bearer ${tokens.access_token}`,
       },
-      timeout: 60000, // Increased to 60 seconds for large requests
+      timeout: 60000,
     });
+
+    this.api.interceptors.request.use((config) => this.injectAuthorization(config));
+    this.api.interceptors.response.use(
+      (response) => response,
+      async (error) => this.handleUnauthorized(error)
+    );
+  }
+
+  private injectAuthorization(
+    config: InternalAxiosRequestConfig
+  ): InternalAxiosRequestConfig {
+    config.headers = config.headers ?? {};
+    config.headers.Authorization = `Bearer ${this.tokens.access_token}`;
+    return config;
+  }
+
+  private async handleUnauthorized(error: unknown): Promise<AxiosResponse | never> {
+    if (!axios.isAxiosError(error) || error.response?.status !== 401) {
+      throw error;
+    }
+
+    const originalRequest = error.config as InternalAxiosRequestConfig & {
+      _retry?: boolean;
+    };
+    if (originalRequest._retry) {
+      throw error;
+    }
+    originalRequest._retry = true;
+
+    const refreshed = await this.refreshAccessToken();
+    if (!refreshed) {
+      throw error;
+    }
+
+    originalRequest.headers = originalRequest.headers ?? {};
+    originalRequest.headers.Authorization = `Bearer ${refreshed.access_token}`;
+
+    return this.api(originalRequest);
+  }
+
+  private async refreshAccessToken(): Promise<AuthTokens | null> {
+    if (!this.tokens.refresh_token) {
+      return null;
+    }
+
+    if (!this.tokenRefreshPromise) {
+      this.tokenRefreshPromise = this.authService
+        .refreshAccessToken(this.tokens.refresh_token)
+        .then((newTokens) => {
+          this.setTokens(newTokens);
+          this.authService.storeTokens(newTokens);
+          return newTokens;
+        })
+        .catch((refreshError) => {
+          console.error('[auth] Failed to refresh access token:', refreshError);
+          return null;
+        })
+        .finally(() => {
+          this.tokenRefreshPromise = null;
+        });
+    }
+
+    return this.tokenRefreshPromise;
+  }
+
+  setTokens(tokens: AuthTokens) {
+    this.tokens = tokens;
+    this.api.defaults.headers.common.Authorization = `Bearer ${tokens.access_token}`;
   }
 
   private async delay(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
+  private async throttleRequests(): Promise<void> {
+    while (true) {
+      const now = Date.now();
+      this.requestTimestamps = this.requestTimestamps.filter(
+        (timestamp) => now - timestamp < REQUEST_INTERVAL_MS
+      );
+
+      if (this.requestTimestamps.length < MAX_REQUESTS_PER_INTERVAL) {
+        this.requestTimestamps.push(now);
+        return;
+      }
+
+      const earliest = this.requestTimestamps[0];
+      const waitTime = REQUEST_INTERVAL_MS - (now - earliest) + 25;
+      await this.delay(waitTime);
+    }
+  }
+
   private async handleRateLimit(error: AxiosError): Promise<number> {
     if (error.response?.status === 429) {
       const retryAfter = error.response.headers['retry-after'];
-      const waitTime = retryAfter ? parseInt(retryAfter) : RATE_LIMIT_RETRY_DEFAULT;
+      let requestedWait = retryAfter ? parseInt(retryAfter, 10) : RATE_LIMIT_RETRY_DEFAULT;
+      if (Number.isNaN(requestedWait)) {
+        requestedWait = RATE_LIMIT_RETRY_DEFAULT;
+      }
+
+      if (requestedWait > MAX_RATE_LIMIT_WAIT_SECONDS) {
+        throw new Error(
+          `Spotify rate limit exceeded. Please try again in approximately ${Math.ceil(
+            requestedWait / 60
+          )} minutes.`
+        );
+      }
+
+      const waitTime = Math.min(requestedWait, MAX_RATE_LIMIT_WAIT_SECONDS);
       console.log(`Rate limited. Waiting ${waitTime} seconds...`);
       await this.delay((waitTime + 1) * 1000);
+      this.currentDelayMs = Math.min(this.currentDelayMs * 1.5, MAX_DYNAMIC_DELAY_MS);
       return waitTime;
     }
+
     throw error;
   }
 
-  private async apiCallWithRetry<T>(
-    apiCall: () => Promise<T>,
-    maxRetries = 5
-  ): Promise<T> {
+  private async apiCallWithRetry<T>(apiCall: () => Promise<T>, maxRetries = 5): Promise<T> {
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       try {
-        await this.delay(DEFAULT_DELAY_MS);
-        return await apiCall();
+        await this.throttleRequests();
+        const jitter = Math.random() * this.currentDelayMs * 0.3;
+        await this.delay(this.currentDelayMs + jitter);
+        const result = await apiCall();
+        this.currentDelayMs = Math.max(DEFAULT_DELAY_MS, Math.floor(this.currentDelayMs * 0.9));
+        return result;
       } catch (error) {
         if (axios.isAxiosError(error)) {
-          // Handle rate limiting
           if (error.response?.status === 429) {
             await this.handleRateLimit(error);
             continue;
           }
-          
-          // Handle network errors (ECONNRESET, ETIMEDOUT, etc.)
-          if (error.code === 'ECONNRESET' || error.code === 'ETIMEDOUT' || error.code === 'ECONNABORTED') {
+
+          if (
+            error.code === 'ECONNRESET' ||
+            error.code === 'ETIMEDOUT' ||
+            error.code === 'ECONNABORTED'
+          ) {
             if (attempt === maxRetries - 1) {
               throw new Error(`Network error after ${maxRetries} attempts: ${error.message}`);
             }
-            const waitTime = Math.pow(2, attempt) * 2000; // Longer wait for network errors
-            console.log(`Network error (${error.code}), retrying in ${waitTime}ms... (attempt ${attempt + 1}/${maxRetries})`);
+            const waitTime = Math.pow(2, attempt) * 2000;
+            console.log(
+              `Network error (${error.code}), retrying in ${waitTime}ms... (attempt ${
+                attempt + 1
+              }/${maxRetries})`
+            );
             await this.delay(waitTime);
             continue;
           }
         }
-        
+
         if (attempt === maxRetries - 1) {
           throw error;
         }
-        
-        // Exponential backoff for other errors
+
         const waitTime = Math.pow(2, attempt) * 1000;
         console.log(`API call failed, retrying in ${waitTime}ms...`);
         await this.delay(waitTime);
       }
     }
+
     throw new Error('Max retries exceeded');
   }
 
   private extractPlaylistId(playlistUrl: string): string {
-    // Extract playlist ID from various URL formats
     const match = playlistUrl.match(/playlist[\/:]([a-zA-Z0-9]+)/);
     if (match && match[1]) {
       return match[1];
     }
-    // If it's already just an ID
+
     if (/^[a-zA-Z0-9]+$/.test(playlistUrl)) {
       return playlistUrl;
     }
+
     throw new Error('Invalid playlist URL or ID');
   }
 
@@ -107,7 +252,6 @@ export class SpotifyService {
   ): Promise<AnalyzePlaylistResponse> {
     const playlistId = this.extractPlaylistId(playlistUrl);
 
-    // Get playlist info
     onProgress?.({ current: 0, total: 4, message: 'Fetching playlist info...' });
     const playlistInfo = await this.apiCallWithRetry(() =>
       this.api.get(`/playlists/${playlistId}`, {
@@ -118,18 +262,13 @@ export class SpotifyService {
     const playlistName = playlistInfo.data.name;
     const playlistOwner = playlistInfo.data.owner.display_name;
 
-    // OPTIMIZATION: Fetch playlist artists and followed artists in parallel
     onProgress?.({ current: 1, total: 4, message: 'Fetching data...' });
-    const [playlistArtists, followedArtistIds] = await Promise.all([
-      this.getPlaylistArtists(playlistId),
-      this.getFollowedArtistIds(),
-    ]);
+    const playlistArtists = await this.getPlaylistArtists(playlistId);
+    const followedArtistIds = await this.getFollowStatusForArtists(Object.keys(playlistArtists));
 
-    // Get artist frequency in playlist
     onProgress?.({ current: 3, total: 4, message: 'Analyzing artists...' });
     const artistFrequency = await this.getArtistFrequency(playlistId);
 
-    // Find unfollowed artists
     const unfollowedArtists: UnfollowedArtist[] = [];
     for (const [artistId, artist] of Object.entries(playlistArtists)) {
       if (!followedArtistIds.has(artistId)) {
@@ -140,7 +279,6 @@ export class SpotifyService {
       }
     }
 
-    // Sort by frequency (descending) then by name
     unfollowedArtists.sort((a, b) => {
       if (b.frequency !== a.frequency) {
         return b.frequency - a.frequency;
@@ -162,7 +300,6 @@ export class SpotifyService {
     let offset = 0;
     const limit = 100;
 
-    // First, collect all unique artist IDs
     while (true) {
       const response = await this.apiCallWithRetry(() =>
         this.api.get(`/playlists/${playlistId}/tracks`, {
@@ -174,25 +311,33 @@ export class SpotifyService {
       for (const item of items) {
         if (item.track?.artists) {
           for (const artist of item.track.artists) {
+            if (!artist?.id) {
+              continue;
+            }
+
             if (!artists[artist.id]) {
               artists[artist.id] = {
                 id: artist.id,
                 name: artist.name,
                 external_urls: artist.external_urls,
-              };
+              } as SpotifyArtist;
             }
           }
         }
       }
 
-      if (!response.data.next) break;
+      if (!response.data.next) {
+        break;
+      }
+
       offset += limit;
     }
 
-    // Now fetch full artist details in batches of 50 (API limit)
     const artistIds = Object.keys(artists);
-    console.log(`[SpotifyService] Fetching details for ${artistIds.length} artists...`);
-    
+    if (!artistIds.length) {
+      return artists;
+    }
+
     for (let i = 0; i < artistIds.length; i += 50) {
       const batch = artistIds.slice(i, i + 50);
       const response = await this.apiCallWithRetry(() =>
@@ -201,8 +346,7 @@ export class SpotifyService {
         })
       );
 
-      // Update artists with images
-      for (const fullArtist of response.data.artists) {
+      for (const fullArtist of response.data.artists ?? []) {
         if (fullArtist && artists[fullArtist.id]) {
           artists[fullArtist.id].images = fullArtist.images;
         }
@@ -212,30 +356,30 @@ export class SpotifyService {
     return artists;
   }
 
-  private async getFollowedArtistIds(): Promise<Set<string>> {
-    const artistIds = new Set<string>();
-    let after: string | undefined;
+  private async getFollowStatusForArtists(artistIds: string[]): Promise<Set<string>> {
+    const followedIds = new Set<string>();
 
-    while (true) {
+    for (let i = 0; i < artistIds.length; i += 50) {
+      const chunk = artistIds.slice(i, i + 50);
+
       const response = await this.apiCallWithRetry(() =>
-        this.api.get('/me/following', {
-          params: { type: 'artist', limit: 50, after },
+        this.api.get('/me/following/contains', {
+          params: { type: 'artist', ids: chunk.join(',') },
         })
       );
 
-      const artists = response.data.artists.items;
-      for (const artist of artists) {
-        artistIds.add(artist.id);
-      }
-
-      if (!response.data.artists.next) break;
-      after = response.data.artists.cursors.after;
+      const statuses: boolean[] = response.data;
+      statuses.forEach((isFollowed, index) => {
+        if (isFollowed) {
+          followedIds.add(chunk[index]);
+        }
+      });
     }
 
-    return artistIds;
+    return followedIds;
   }
 
-  private async getFollowedArtists(): Promise<SpotifyArtist[]> {
+  private async getFollowedArtists(limit?: number): Promise<SpotifyArtist[]> {
     const artists: SpotifyArtist[] = [];
     let after: string | undefined;
 
@@ -246,10 +390,17 @@ export class SpotifyService {
         })
       );
 
-      artists.push(...response.data.artists.items);
+      artists.push(...(response.data.artists?.items ?? []));
 
-      if (!response.data.artists.next) break;
-      after = response.data.artists.cursors.after;
+      if (limit && artists.length >= limit) {
+        return artists.slice(0, limit);
+      }
+
+      if (!response.data.artists?.next) {
+        break;
+      }
+
+      after = response.data.artists.cursors?.after;
     }
 
     return artists;
@@ -271,12 +422,18 @@ export class SpotifyService {
       for (const item of items) {
         if (item.track?.artists) {
           for (const artist of item.track.artists) {
+            if (!artist?.id) {
+              continue;
+            }
             frequency[artist.id] = (frequency[artist.id] || 0) + 1;
           }
         }
       }
 
-      if (!response.data.next) break;
+      if (!response.data.next) {
+        break;
+      }
+
       offset += limit;
     }
 
@@ -313,7 +470,6 @@ export class SpotifyService {
         failedArtists.push(...chunk);
       }
 
-      // Add delay between chunks
       if (i + CHUNK_SIZE_FOLLOW < artistIds.length) {
         await this.delay(2000);
       }
@@ -331,41 +487,23 @@ export class SpotifyService {
     maxArtists?: number,
     onProgress?: (progress: ProgressUpdate) => void
   ): Promise<ScanReleasesResponse> {
-    // Calculate the date threshold
     const sinceDate = new Date();
     sinceDate.setDate(sinceDate.getDate() - daysBack);
 
-    // Get followed artists
     onProgress?.({ current: 0, total: 1, message: 'Fetching followed artists...' });
-    const artists = await this.getFollowedArtists();
-
-    console.log('[SpotifyService] scanForNewReleases params:', { 
-      daysBack, 
-      maxArtists, 
-      totalFollowedArtists: artists.length 
-    });
+    const artists = await this.getFollowedArtists(maxArtists);
 
     const artistsToCheck = maxArtists && maxArtists > 0 ? artists.slice(0, maxArtists) : artists;
-    
-    console.log('[SpotifyService] Checking releases for:', {
-      requestedMax: maxArtists,
-      actualArtistsToCheck: artistsToCheck.length,
-      isLimited: maxArtists !== undefined && maxArtists > 0
-    });
 
     const releases: ReleaseWithArtist[] = [];
     const seenAlbumIds = new Set<string>();
-
     const startTime = Date.now();
-    
-    // OPTIMIZATION: Process artists in parallel batches (5 at a time to avoid rate limits)
     const batchSize = 5;
-    
+
     for (let batchStart = 0; batchStart < artistsToCheck.length; batchStart += batchSize) {
       const batchEnd = Math.min(batchStart + batchSize, artistsToCheck.length);
       const batch = artistsToCheck.slice(batchStart, batchEnd);
-      
-      // Calculate progress and ETA
+
       const progress = batchEnd;
       const elapsed = Date.now() - startTime;
       const avgTimePerArtist = elapsed / Math.max(1, batchEnd);
@@ -375,17 +513,13 @@ export class SpotifyService {
       onProgress?.({
         current: progress,
         total: artistsToCheck.length,
-        message: `Checking ${batch.map(a => a.name).join(', ')}... (ETA: ${etaMinutes.toFixed(1)}m)`,
+        message: `Checking ${batch.map((a) => a.name).join(', ')}... (ETA: ${etaMinutes.toFixed(1)}m)`,
       });
 
-      // Process batch in parallel
       const batchResults = await Promise.allSettled(
-        batch.map(artist =>
-          this.getRecentReleasesForArtist(artist.id, artist.name, sinceDate)
-        )
+        batch.map((artist) => this.getRecentReleasesForArtist(artist.id, artist.name, sinceDate))
       );
 
-      // Collect successful results
       for (const result of batchResults) {
         if (result.status === 'fulfilled') {
           for (const release of result.value) {
@@ -400,7 +534,6 @@ export class SpotifyService {
       }
     }
 
-    // Sort by release date (descending)
     releases.sort((a, b) => {
       return new Date(b.release_date).getTime() - new Date(a.release_date).getTime();
     });
@@ -417,14 +550,13 @@ export class SpotifyService {
     sinceDate: Date
   ): Promise<ReleaseWithArtist[]> {
     const releases: ReleaseWithArtist[] = [];
-    const albumTypes = ['album', 'single'];
+    const albumTypes: Array<'album' | 'single'> = ['album', 'single'];
 
     for (const albumType of albumTypes) {
       let offset = 0;
       const limit = 20;
       let shouldContinue = true;
 
-      // Only check first 2 pages per type
       for (let page = 0; page < 2 && shouldContinue; page++) {
         const response = await this.apiCallWithRetry(() =>
           this.api.get(`/artists/${artistId}/albums`, {
@@ -449,10 +581,9 @@ export class SpotifyService {
             releases.push({
               ...album,
               artist_name: artistName,
-            });
+            } as ReleaseWithArtist);
           }
 
-          // Check if last item is too old
           if (items.indexOf(album) === items.length - 1) {
             const lastDate = this.parseReleaseDate(
               album.release_date,
@@ -480,7 +611,7 @@ export class SpotifyService {
       if (precision === 'day') {
         return new Date(dateStr);
       }
-      return null; // Can't reliably compare month/year precision for "last N days"
+      return null;
     } catch {
       return null;
     }
@@ -492,15 +623,13 @@ export class SpotifyService {
     isPublic: boolean,
     onProgress?: (progress: ProgressUpdate) => void
   ): Promise<CreatePlaylistResponse> {
-    // Get current user
     onProgress?.({ current: 0, total: 3, message: 'Getting user info...' });
     const userResponse = await this.apiCallWithRetry(() => this.api.get('/me'));
     const userId = userResponse.data.id;
 
-    // Create playlist
     onProgress?.({ current: 1, total: 3, message: 'Creating playlist...' });
     const description = `Tracks from recent releases (last ${releases.length} releases) - Created by Spotify Release Hub`;
-    
+
     const playlistResponse = await this.apiCallWithRetry(() =>
       this.api.post(`/users/${userId}/playlists`, {
         name: playlistName,
@@ -512,16 +641,20 @@ export class SpotifyService {
     const playlistId = playlistResponse.data.id;
     const playlistUrl = playlistResponse.data.external_urls.spotify;
 
-    // Collect all track IDs
-    onProgress?.({ current: 2, total: 3, message: 'Collecting tracks from albums...' });
-    const trackIds: string[] = [];
+    const albumIds = releases.map((release) => release.id);
+    const albumTrackMap = await this.getAlbumTrackMap(albumIds, (progress) => {
+      onProgress?.({
+        current: 2,
+        total: 3,
+        message: `Collecting tracks (${progress.current}/${progress.total})...`,
+      });
+    });
 
-    for (const release of releases) {
-      const albumTracks = await this.getAlbumTracks(release.id);
-      trackIds.push(...albumTracks);
+    const trackIds: string[] = [];
+    for (const ids of albumTrackMap.values()) {
+      trackIds.push(...ids);
     }
 
-    // Add tracks in chunks
     onProgress?.({ current: 3, total: 3, message: 'Adding tracks to playlist...' });
     for (let i = 0; i < trackIds.length; i += CHUNK_SIZE_PLAYLIST_ADD) {
       const chunk = trackIds.slice(i, i + CHUNK_SIZE_PLAYLIST_ADD);
@@ -541,93 +674,145 @@ export class SpotifyService {
     };
   }
 
-  private async getAlbumTracks(albumId: string): Promise<string[]> {
-    const trackIds: string[] = [];
-    let offset = 0;
-    const limit = 50;
+  private async getAlbumTrackMap(
+    albumIds: string[],
+    onProgress?: (progress: ProgressUpdate) => void
+  ): Promise<Map<string, string[]>> {
+    const uniqueAlbumIds = Array.from(new Set(albumIds));
+    const albumTrackMap = new Map<string, string[]>();
 
-    while (true) {
+    if (uniqueAlbumIds.length === 0) {
+      return albumTrackMap;
+    }
+
+    const totalAlbums = uniqueAlbumIds.length;
+    let processedAlbums = 0;
+
+    for (let i = 0; i < uniqueAlbumIds.length; i += 20) {
+      const batch = uniqueAlbumIds.slice(i, i + 20);
+
       const response = await this.apiCallWithRetry(() =>
-        this.api.get(`/albums/${albumId}/tracks`, {
-          params: { offset, limit, market: 'US' },
+        this.api.get('/albums', {
+          params: {
+            ids: batch.join(','),
+            market: 'US',
+          },
         })
       );
 
-      const items = response.data.items;
-      for (const track of items) {
-        if (track.id) {
+      const albums = (response.data.albums ?? []) as AlbumWithTracks[];
+      for (const album of albums) {
+        if (!album?.id) {
+          continue;
+        }
+
+        const trackIds = await this.collectAllTrackIdsFromAlbum(album);
+        albumTrackMap.set(album.id, trackIds);
+        processedAlbums += 1;
+
+        onProgress?.({
+          current: processedAlbums,
+          total: totalAlbums,
+          message: `Loaded ${processedAlbums}/${totalAlbums} albums...`,
+        });
+      }
+    }
+
+    return albumTrackMap;
+  }
+
+  private async collectAllTrackIdsFromAlbum(album: AlbumWithTracks): Promise<string[]> {
+    const cached = this.albumTrackCache.get(album.id);
+    if (cached) {
+      return [...cached];
+    }
+
+    const trackIds: string[] = [];
+    const summary = album.tracks;
+    if (summary?.items?.length) {
+      for (const track of summary.items) {
+        if (track?.id) {
           trackIds.push(track.id);
         }
       }
-
-      if (!response.data.next) break;
-      offset += limit;
     }
 
-    return trackIds;
+    let nextUrl = summary?.next ?? null;
+    while (nextUrl) {
+      const url = nextUrl;
+      const nextResponse = await this.apiCallWithRetry(() =>
+        this.api.get(this.stripBaseUrl(url))
+      );
+
+      const nextData = nextResponse.data as AlbumTracksSummary;
+      if (Array.isArray(nextData.items)) {
+        for (const track of nextData.items) {
+          if (track?.id) {
+            trackIds.push(track.id);
+          }
+        }
+      }
+
+      nextUrl = nextData.next ?? null;
+    }
+
+    this.albumTrackCache.set(album.id, trackIds);
+    return [...trackIds];
+  }
+
+  private stripBaseUrl(url: string): string {
+    if (url.startsWith(SPOTIFY_API_BASE_URL)) {
+      return url.slice(SPOTIFY_API_BASE_URL.length);
+    }
+    return url;
   }
 
   async getTracksFromAlbums(
     albumIds: string[],
     onProgress?: (progress: ProgressUpdate) => void
   ): Promise<SpotifyTrack[]> {
-    const allTracks: SpotifyTrack[] = [];
-    
-    console.log(`[SpotifyService] Fetching tracks from ${albumIds.length} albums...`);
+    const trackMap = await this.getAlbumTrackMap(albumIds, onProgress);
+    const uniqueTrackIds = new Set<string>();
+    for (const ids of trackMap.values()) {
+      ids.forEach((id) => uniqueTrackIds.add(id));
+    }
 
-    for (let i = 0; i < albumIds.length; i++) {
-      const albumId = albumIds[i];
-      
+    const trackIds = Array.from(uniqueTrackIds);
+    if (trackIds.length === 0) {
+      return [];
+    }
+
+    const allTracks: SpotifyTrack[] = [];
+    const totalChunks = Math.ceil(trackIds.length / CHUNK_SIZE_TRACK_DETAILS);
+
+    for (let i = 0; i < trackIds.length; i += CHUNK_SIZE_TRACK_DETAILS) {
+      const chunkIndex = Math.floor(i / CHUNK_SIZE_TRACK_DETAILS) + 1;
+      const chunk = trackIds.slice(i, i + CHUNK_SIZE_TRACK_DETAILS);
+
       onProgress?.({
-        current: i + 1,
-        total: albumIds.length,
-        message: `Fetching tracks from album ${i + 1}/${albumIds.length}...`,
+        current: trackMap.size + chunkIndex,
+        total: trackMap.size + totalChunks,
+        message: `Fetching track details (${chunkIndex}/${totalChunks})...`,
       });
 
-      try {
-        let offset = 0;
-        const limit = 50;
+      const response = await this.apiCallWithRetry(() =>
+        this.api.get('/tracks', {
+          params: {
+            ids: chunk.join(','),
+            market: 'US',
+          },
+        })
+      );
 
-        while (true) {
-          const response = await this.apiCallWithRetry(() =>
-            this.api.get(`/albums/${albumId}/tracks`, {
-              params: { offset, limit, market: 'US' },
-            })
-          );
-
-          const tracks = response.data.items;
-          
-          // Fetch full track details to get preview_url and complete info
-          for (const track of tracks) {
-            if (track.id) {
-              const fullTrack = await this.apiCallWithRetry(() =>
-                this.api.get(`/tracks/${track.id}`, {
-                  params: { market: 'US' },
-                })
-              );
-              
-              allTracks.push({
-                id: fullTrack.data.id,
-                name: fullTrack.data.name,
-                artists: fullTrack.data.artists,
-                album: fullTrack.data.album,
-                duration_ms: fullTrack.data.duration_ms,
-                external_urls: fullTrack.data.external_urls,
-                preview_url: fullTrack.data.preview_url,
-                uri: fullTrack.data.uri,
-              } as SpotifyTrack & { preview_url: string | null; uri: string });
-            }
+      if (Array.isArray(response.data.tracks)) {
+        for (const track of response.data.tracks) {
+          if (track) {
+            allTracks.push(track as SpotifyTrack);
           }
-
-          if (!response.data.next) break;
-          offset += limit;
         }
-      } catch (error) {
-        console.error(`Error fetching tracks for album ${albumId}:`, error);
       }
     }
 
-    console.log(`[SpotifyService] Fetched ${allTracks.length} tracks total`);
     return allTracks;
   }
 
@@ -637,16 +822,10 @@ export class SpotifyService {
     isPublic: boolean,
     onProgress?: (progress: ProgressUpdate) => void
   ): Promise<{ playlistUrl: string; playlistId: string; tracksAdded: number }> {
-    console.log(`[SpotifyService] Creating playlist "${playlistName}" with ${trackUris.length} tracks...`);
-
-    // Get current user
     onProgress?.({ current: 0, total: 3, message: 'Getting user info...' });
-    const userResponse = await this.apiCallWithRetry(() =>
-      this.api.get('/me')
-    );
+    const userResponse = await this.apiCallWithRetry(() => this.api.get('/me'));
     const userId = userResponse.data.id;
 
-    // Create playlist
     onProgress?.({ current: 1, total: 3, message: 'Creating playlist...' });
     const playlistResponse = await this.apiCallWithRetry(() =>
       this.api.post(`/users/${userId}/playlists`, {
@@ -659,14 +838,13 @@ export class SpotifyService {
     const playlistId = playlistResponse.data.id;
     const playlistUrl = playlistResponse.data.external_urls.spotify;
 
-    // Add tracks in chunks
     onProgress?.({ current: 2, total: 3, message: 'Adding tracks to playlist...' });
     const chunkSize = 100;
     let tracksAdded = 0;
 
     for (let i = 0; i < trackUris.length; i += chunkSize) {
       const chunk = trackUris.slice(i, i + chunkSize);
-      
+
       await this.apiCallWithRetry(() =>
         this.api.post(`/playlists/${playlistId}/tracks`, {
           uris: chunk,
@@ -674,7 +852,7 @@ export class SpotifyService {
       );
 
       tracksAdded += chunk.length;
-      
+
       onProgress?.({
         current: 2,
         total: 3,

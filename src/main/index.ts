@@ -225,7 +225,11 @@ ipcMain.handle(IPC_CHANNELS.AUTH_START, async () => {
     }
 
     const tokens = await authService.authenticate();
-    spotifyService = new SpotifyService(tokens);
+    if (spotifyService) {
+      spotifyService.setTokens(tokens);
+    } else {
+      spotifyService = new SpotifyService(tokens, authService);
+    }
     return { success: true };
   } catch (error) {
     console.error('Authentication error:', error);
@@ -241,7 +245,11 @@ ipcMain.handle(IPC_CHANNELS.AUTH_CHECK, async () => {
 
     const tokens = authService.getStoredTokens();
     if (tokens) {
-      spotifyService = new SpotifyService(tokens);
+      if (spotifyService) {
+        spotifyService.setTokens(tokens);
+      } else {
+        spotifyService = new SpotifyService(tokens, authService);
+      }
       return { authenticated: true };
     }
     return { authenticated: false };

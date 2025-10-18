@@ -20,12 +20,12 @@ const IPC_CHANNELS = {
   SCAN_RELEASES_PROGRESS: 'releases:scan:progress',
   SCAN_RELEASES_COMPLETE: 'releases:scan:complete',
   // Playlist creation
-  CREATE_PLAYLIST: 'playlist:create',
-  CREATE_PLAYLIST_PROGRESS: 'playlist:create:progress',
-  CREATE_PLAYLIST_COMPLETE: 'playlist:create:complete',
+  CREATE_PLAYLIST: 'releases:create-playlist',
+  CREATE_PLAYLIST_PROGRESS: 'releases:create-playlist:progress',
+  CREATE_PLAYLIST_COMPLETE: 'releases:create-playlist:complete',
   // Track management
   GET_TRACKS_FROM_ALBUMS: 'tracks:get-from-albums',
-  CREATE_PLAYLIST_FROM_TRACKS: 'playlist:create-from-tracks',
+  CREATE_PLAYLIST_FROM_TRACKS: 'tracks:create-playlist',
   // Updates
   UPDATES_CHECK: 'updates:check',
   UPDATES_AVAILABLE: 'updates:available',

@@ -5,6 +5,7 @@ import * as http from 'http';
 import * as url from 'url';
 import type { AuthTokens, AppConfig } from '../../shared/types';
 import { SPOTIFY_ACCOUNTS_BASE_URL, SPOTIFY_SCOPES } from '../../shared/constants';
+import { getSecureSpotifyCredentials } from '../utils/secureCredentials';
 
 interface StoreSchema {
   tokens: AuthTokens | null;
@@ -23,11 +24,13 @@ export class AuthService {
       },
     });
 
-    // Always load config from environment variables (not from cache)
+    const secureCredentials = getSecureSpotifyCredentials();
+
+    // Always load config from environment variables, fallback to bundled credentials
     this.config = {
-      clientId: process.env.SPOTIFY_CLIENT_ID || '',
-      clientSecret: process.env.SPOTIFY_CLIENT_SECRET || '',
-      redirectUri: process.env.SPOTIFY_REDIRECT_URI || 'http://localhost:8888/callback',
+      clientId: process.env.SPOTIFY_CLIENT_ID || secureCredentials.clientId,
+      clientSecret: process.env.SPOTIFY_CLIENT_SECRET || secureCredentials.clientSecret,
+      redirectUri: process.env.SPOTIFY_REDIRECT_URI || secureCredentials.redirectUri,
     };
 
     if (!this.config.clientId || !this.config.clientSecret) {
