@@ -28,6 +28,11 @@ import {
 } from '../../shared/constants';
 import { AuthService } from './AuthService';
 
+const CACHE_TTL_FOLLOWED_ARTISTS_MS = 1000 * 60 * 60 * 4; // 4 hours
+const CACHE_TTL_ARTIST_DETAILS_MS = 1000 * 60 * 60 * 6; // 6 hours
+const CACHE_TTL_FOLLOW_STATUS_MS = 1000 * 60 * 60 * 2; // 2 hours
+const CACHE_TTL_PLAYLIST_ANALYSIS_MS = 1000 * 60 * 10; // 10 minutes
+
 type AlbumTracksSummary = {
   items: Array<{ id: string | null }>;
   next?: string | null;
@@ -54,6 +59,22 @@ export class SpotifyService {
   private currentDelayMs = DEFAULT_DELAY_MS;
 
   private albumTrackCache = new Map<string, string[]>();
+
+  private followedArtistsCache: { timestamp: number; artists: SpotifyArtist[] } | null = null;
+
+  private followedArtistsCacheByLimit = new Map<
+    number,
+    { timestamp: number; artists: SpotifyArtist[] }
+  >();
+
+  private artistDetailsCache = new Map<string, { artist: SpotifyArtist; timestamp: number }>();
+
+  private followStatusCache = new Map<string, { isFollowed: boolean; timestamp: number }>();
+
+  private playlistAnalysisCache = new Map<
+    string,
+    { response: AnalyzePlaylistResponse; timestamp: number }
+  >();
 
   constructor(tokens: AuthTokens, authService: AuthService) {
     this.tokens = tokens;
@@ -137,6 +158,79 @@ export class SpotifyService {
 
   private async delay(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  private isCacheEntryValid(timestamp: number, ttlMs: number): boolean {
+    return Date.now() - timestamp < ttlMs;
+  }
+
+  private cloneArtist(artist: SpotifyArtist): SpotifyArtist {
+    return {
+      ...artist,
+      images: artist.images?.map((image) => ({ ...image })),
+      external_urls: artist.external_urls ? { ...artist.external_urls } : undefined,
+    };
+  }
+
+  private getCachedArtistDetails(artistId: string): SpotifyArtist | null {
+    const cached = this.artistDetailsCache.get(artistId);
+    if (!cached) {
+      return null;
+    }
+
+    if (!this.isCacheEntryValid(cached.timestamp, CACHE_TTL_ARTIST_DETAILS_MS)) {
+      this.artistDetailsCache.delete(artistId);
+      return null;
+    }
+
+    return this.cloneArtist(cached.artist);
+  }
+
+  private setArtistDetailsCache(artist: SpotifyArtist): void {
+    this.artistDetailsCache.set(artist.id, {
+      artist: this.cloneArtist(artist),
+      timestamp: Date.now(),
+    });
+  }
+
+  private getCachedPlaylistAnalysis(
+    playlistId: string
+  ): AnalyzePlaylistResponse | null {
+    const cached = this.playlistAnalysisCache.get(playlistId);
+    if (!cached) {
+      return null;
+    }
+
+    if (!this.isCacheEntryValid(cached.timestamp, CACHE_TTL_PLAYLIST_ANALYSIS_MS)) {
+      this.playlistAnalysisCache.delete(playlistId);
+      return null;
+    }
+
+    return {
+      ...cached.response,
+      unfollowedArtists: cached.response.unfollowedArtists.map((artist) => ({
+        ...artist,
+        images: artist.images?.map((image) => ({ ...image })),
+        external_urls: artist.external_urls ? { ...artist.external_urls } : undefined,
+      })),
+    };
+  }
+
+  private setPlaylistAnalysisCache(
+    playlistId: string,
+    response: AnalyzePlaylistResponse
+  ): void {
+    this.playlistAnalysisCache.set(playlistId, {
+      response: {
+        ...response,
+        unfollowedArtists: response.unfollowedArtists.map((artist) => ({
+          ...artist,
+          images: artist.images?.map((image) => ({ ...image })),
+          external_urls: artist.external_urls ? { ...artist.external_urls } : undefined,
+        })),
+      },
+      timestamp: Date.now(),
+    });
   }
 
   private async throttleRequests(): Promise<void> {
@@ -250,6 +344,16 @@ export class SpotifyService {
   ): Promise<AnalyzePlaylistResponse> {
     const playlistId = this.extractPlaylistId(playlistUrl);
 
+    const cachedAnalysis = this.getCachedPlaylistAnalysis(playlistId);
+    if (cachedAnalysis) {
+      onProgress?.({
+        current: 4,
+        total: 4,
+        message: 'Using cached playlist analysis.',
+      });
+      return cachedAnalysis;
+    }
+
     onProgress?.({ current: 0, total: 4, message: 'Fetching playlist info...' });
     const playlistInfo = await this.apiCallWithRetry(() =>
       this.api.get(`/playlists/${playlistId}`, {
@@ -261,11 +365,11 @@ export class SpotifyService {
     const playlistOwner = playlistInfo.data.owner.display_name;
 
     onProgress?.({ current: 1, total: 4, message: 'Fetching data...' });
-    const playlistArtists = await this.getPlaylistArtists(playlistId);
+    const { artists: playlistArtists, frequency: artistFrequency } =
+      await this.getPlaylistArtistData(playlistId);
     const followedArtistIds = await this.getFollowStatusForArtists(Object.keys(playlistArtists));
 
     onProgress?.({ current: 3, total: 4, message: 'Analyzing artists...' });
-    const artistFrequency = await this.getArtistFrequency(playlistId);
 
     const unfollowedArtists: UnfollowedArtist[] = [];
     for (const [artistId, artist] of Object.entries(playlistArtists)) {
@@ -286,41 +390,66 @@ export class SpotifyService {
 
     onProgress?.({ current: 4, total: 4, message: 'Analysis complete!' });
 
-    return {
+    const response: AnalyzePlaylistResponse = {
       playlistName,
       playlistOwner,
       unfollowedArtists,
     };
+
+    this.setPlaylistAnalysisCache(playlistId, response);
+
+    return response;
   }
 
-  private async getPlaylistArtists(playlistId: string): Promise<Record<string, SpotifyArtist>> {
+  private async getPlaylistArtistData(
+    playlistId: string
+  ): Promise<{ artists: Record<string, SpotifyArtist>; frequency: Record<string, number> }> {
     const artists: Record<string, SpotifyArtist> = {};
+    const frequency: Record<string, number> = {};
+    const artistIdsToHydrate = new Set<string>();
     let offset = 0;
     const limit = 100;
 
     while (true) {
       const response = await this.apiCallWithRetry(() =>
         this.api.get(`/playlists/${playlistId}/tracks`, {
-          params: { offset, limit, fields: 'items(track(artists(id,name,external_urls))),next' },
+          params: {
+            offset,
+            limit,
+            fields: 'items(track(artists(id,name,external_urls))),next',
+          },
         })
       );
 
-      const items = response.data.items;
+      const items = response.data.items ?? [];
       for (const item of items) {
-        if (item.track?.artists) {
-          for (const artist of item.track.artists) {
-            if (!artist?.id) {
-              continue;
-            }
+        if (!item.track?.artists) {
+          continue;
+        }
 
-            if (!artists[artist.id]) {
-              artists[artist.id] = {
-                id: artist.id,
-                name: artist.name,
-                external_urls: artist.external_urls,
-              } as SpotifyArtist;
-            }
+        for (const artist of item.track.artists) {
+          if (!artist?.id) {
+            continue;
           }
+
+          frequency[artist.id] = (frequency[artist.id] || 0) + 1;
+
+          if (artists[artist.id]) {
+            continue;
+          }
+
+          const cachedArtist = this.getCachedArtistDetails(artist.id);
+          if (cachedArtist) {
+            artists[artist.id] = cachedArtist;
+            continue;
+          }
+
+          artists[artist.id] = {
+            id: artist.id,
+            name: artist.name,
+            external_urls: artist.external_urls,
+          } as SpotifyArtist;
+          artistIdsToHydrate.add(artist.id);
         }
       }
 
@@ -331,34 +460,57 @@ export class SpotifyService {
       offset += limit;
     }
 
-    const artistIds = Object.keys(artists);
-    if (!artistIds.length) {
-      return artists;
-    }
+    if (artistIdsToHydrate.size > 0) {
+      const ids = Array.from(artistIdsToHydrate);
+      for (let i = 0; i < ids.length; i += 50) {
+        const batch = ids.slice(i, i + 50);
+        const response = await this.apiCallWithRetry(() =>
+          this.api.get('/artists', {
+            params: { ids: batch.join(',') },
+          })
+        );
 
-    for (let i = 0; i < artistIds.length; i += 50) {
-      const batch = artistIds.slice(i, i + 50);
-      const response = await this.apiCallWithRetry(() =>
-        this.api.get('/artists', {
-          params: { ids: batch.join(',') },
-        })
-      );
+        for (const fullArtist of response.data.artists ?? []) {
+          if (!fullArtist?.id || !artists[fullArtist.id]) {
+            continue;
+          }
 
-      for (const fullArtist of response.data.artists ?? []) {
-        if (fullArtist && artists[fullArtist.id]) {
-          artists[fullArtist.id].images = fullArtist.images;
+          const enriched = this.cloneArtist(fullArtist as SpotifyArtist);
+          artists[fullArtist.id] = enriched;
+          this.setArtistDetailsCache(enriched);
         }
       }
     }
 
-    return artists;
+    return { artists, frequency };
   }
 
   private async getFollowStatusForArtists(artistIds: string[]): Promise<Set<string>> {
     const followedIds = new Set<string>();
+    const idsToFetch: string[] = [];
 
-    for (let i = 0; i < artistIds.length; i += 50) {
-      const chunk = artistIds.slice(i, i + 50);
+    for (const artistId of artistIds) {
+      const cached = this.followStatusCache.get(artistId);
+      if (cached && this.isCacheEntryValid(cached.timestamp, CACHE_TTL_FOLLOW_STATUS_MS)) {
+        if (cached.isFollowed) {
+          followedIds.add(artistId);
+        }
+        continue;
+      }
+
+      if (cached) {
+        this.followStatusCache.delete(artistId);
+      }
+
+      idsToFetch.push(artistId);
+    }
+
+    for (let i = 0; i < idsToFetch.length; i += 50) {
+      const chunk = idsToFetch.slice(i, i + 50);
+
+      if (!chunk.length) {
+        continue;
+      }
 
       const response = await this.apiCallWithRetry(() =>
         this.api.get('/me/following/contains', {
@@ -368,8 +520,14 @@ export class SpotifyService {
 
       const statuses: boolean[] = response.data;
       statuses.forEach((isFollowed, index) => {
+        const artistId = chunk[index];
+        this.followStatusCache.set(artistId, {
+          isFollowed,
+          timestamp: Date.now(),
+        });
+
         if (isFollowed) {
-          followedIds.add(chunk[index]);
+          followedIds.add(artistId);
         }
       });
     }
@@ -378,6 +536,32 @@ export class SpotifyService {
   }
 
   private async getFollowedArtists(limit?: number): Promise<SpotifyArtist[]> {
+    if (!limit) {
+      if (
+        this.followedArtistsCache &&
+        this.isCacheEntryValid(this.followedArtistsCache.timestamp, CACHE_TTL_FOLLOWED_ARTISTS_MS)
+      ) {
+        return this.followedArtistsCache.artists.map((artist) => this.cloneArtist(artist));
+      }
+    } else {
+      if (this.followedArtistsCache) {
+        const cachedAll = this.followedArtistsCache;
+        if (this.isCacheEntryValid(cachedAll.timestamp, CACHE_TTL_FOLLOWED_ARTISTS_MS)) {
+          if (cachedAll.artists.length >= limit) {
+            return cachedAll.artists.slice(0, limit).map((artist) => this.cloneArtist(artist));
+          }
+        }
+      }
+
+      const cachedLimit = this.followedArtistsCacheByLimit.get(limit);
+      if (
+        cachedLimit &&
+        this.isCacheEntryValid(cachedLimit.timestamp, CACHE_TTL_FOLLOWED_ARTISTS_MS)
+      ) {
+        return cachedLimit.artists.map((artist) => this.cloneArtist(artist));
+      }
+    }
+
     const artists: SpotifyArtist[] = [];
     let after: string | undefined;
 
@@ -391,7 +575,12 @@ export class SpotifyService {
       artists.push(...(response.data.artists?.items ?? []));
 
       if (limit && artists.length >= limit) {
-        return artists.slice(0, limit);
+        const sliced = artists.slice(0, limit);
+        this.followedArtistsCacheByLimit.set(limit, {
+          artists: sliced.map((artist) => this.cloneArtist(artist)),
+          timestamp: Date.now(),
+        });
+        return sliced.map((artist) => this.cloneArtist(artist));
       }
 
       if (!response.data.artists?.next) {
@@ -401,41 +590,12 @@ export class SpotifyService {
       after = response.data.artists.cursors?.after;
     }
 
-    return artists;
-  }
+    this.followedArtistsCache = {
+      artists: artists.map((artist) => this.cloneArtist(artist)),
+      timestamp: Date.now(),
+    };
 
-  private async getArtistFrequency(playlistId: string): Promise<Record<string, number>> {
-    const frequency: Record<string, number> = {};
-    let offset = 0;
-    const limit = 100;
-
-    while (true) {
-      const response = await this.apiCallWithRetry(() =>
-        this.api.get(`/playlists/${playlistId}/tracks`, {
-          params: { offset, limit, fields: 'items(track(artists)),next' },
-        })
-      );
-
-      const items = response.data.items;
-      for (const item of items) {
-        if (item.track?.artists) {
-          for (const artist of item.track.artists) {
-            if (!artist?.id) {
-              continue;
-            }
-            frequency[artist.id] = (frequency[artist.id] || 0) + 1;
-          }
-        }
-      }
-
-      if (!response.data.next) {
-        break;
-      }
-
-      offset += limit;
-    }
-
-    return frequency;
+    return artists.map((artist) => this.cloneArtist(artist));
   }
 
   async followArtistsBulk(
