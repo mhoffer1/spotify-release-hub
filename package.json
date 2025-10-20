@@ -29,7 +29,7 @@
     "typescript",
     "music"
   ],
-  "author": "Your Name",
+  "author": "Matias Hoffer <",
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^24.8.1",
@@ -98,8 +98,7 @@
           ]
         }
       ],
-      "artifactName": "${productName}-${version}-${arch}.${ext}",
-      "sign": null
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
     },
     "nsis": {
       "oneClick": false,
