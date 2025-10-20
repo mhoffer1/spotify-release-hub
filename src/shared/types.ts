@@ -6,6 +6,8 @@ export interface SpotifyArtist {
   external_urls?: {
     spotify?: string;
   };
+  genres?: string[];
+  popularity?: number;
   images?: Array<{
     url: string;
     height: number;
@@ -87,7 +89,8 @@ export const IPC_CHANNELS = {
   FOLLOW_ARTISTS: 'playlist:follow',
   FOLLOW_ARTISTS_PROGRESS: 'playlist:follow:progress',
   FOLLOW_ARTISTS_COMPLETE: 'playlist:follow:complete',
-  
+  RELATED_ARTISTS: 'artists:related',
+
   // New Releases
   SCAN_RELEASES: 'releases:scan',
   SCAN_RELEASES_PROGRESS: 'releases:scan:progress',
@@ -125,6 +128,14 @@ export interface FollowArtistsResponse {
   followedCount: number;
   failedCount: number;
   failedArtists: string[];
+}
+
+export interface GetRelatedArtistsRequest {
+  artistIds: string[];
+}
+
+export interface GetRelatedArtistsResponse {
+  artists: SpotifyArtist[];
 }
 
 export interface ScanReleasesRequest {

@@ -32,6 +32,7 @@ const CACHE_TTL_FOLLOWED_ARTISTS_MS = 1000 * 60 * 60 * 4; // 4 hours
 const CACHE_TTL_ARTIST_DETAILS_MS = 1000 * 60 * 60 * 6; // 6 hours
 const CACHE_TTL_FOLLOW_STATUS_MS = 1000 * 60 * 60 * 2; // 2 hours
 const CACHE_TTL_PLAYLIST_ANALYSIS_MS = 1000 * 60 * 10; // 10 minutes
+const CACHE_TTL_RELATED_ARTISTS_MS = 1000 * 60 * 60 * 3; // 3 hours
 
 type AlbumTracksSummary = {
   items: Array<{ id: string | null }>;
@@ -70,6 +71,8 @@ export class SpotifyService {
   private artistDetailsCache = new Map<string, { artist: SpotifyArtist; timestamp: number }>();
 
   private followStatusCache = new Map<string, { isFollowed: boolean; timestamp: number }>();
+
+  private relatedArtistsCache = new Map<string, { artists: SpotifyArtist[]; timestamp: number }>();
 
   private playlistAnalysisCache = new Map<
     string,
@@ -189,6 +192,27 @@ export class SpotifyService {
   private setArtistDetailsCache(artist: SpotifyArtist): void {
     this.artistDetailsCache.set(artist.id, {
       artist: this.cloneArtist(artist),
+      timestamp: Date.now(),
+    });
+  }
+
+  private getCachedRelatedArtists(artistId: string): SpotifyArtist[] | null {
+    const cached = this.relatedArtistsCache.get(artistId);
+    if (!cached) {
+      return null;
+    }
+
+    if (!this.isCacheEntryValid(cached.timestamp, CACHE_TTL_RELATED_ARTISTS_MS)) {
+      this.relatedArtistsCache.delete(artistId);
+      return null;
+    }
+
+    return cached.artists.map((artist) => this.cloneArtist(artist));
+  }
+
+  private setRelatedArtistsCache(artistId: string, artists: SpotifyArtist[]): void {
+    this.relatedArtistsCache.set(artistId, {
+      artists: artists.map((artist) => this.cloneArtist(artist)),
       timestamp: Date.now(),
     });
   }
@@ -535,6 +559,65 @@ export class SpotifyService {
     return followedIds;
   }
 
+  async getRelatedArtists(artistIds: string[]): Promise<SpotifyArtist[]> {
+    const uniqueIds = Array.from(new Set(artistIds.filter((id) => Boolean(id))));
+    if (!uniqueIds.length) {
+      return [];
+    }
+
+    const seedSet = new Set(uniqueIds);
+    const relatedMap = new Map<string, SpotifyArtist>();
+
+    for (const artistId of uniqueIds) {
+      let related = this.getCachedRelatedArtists(artistId);
+
+      if (!related) {
+        const response = await this.apiCallWithRetry(() =>
+          this.api.get(`/artists/${artistId}/related-artists`)
+        );
+
+        const fetched: SpotifyArtist[] = (response.data?.artists ?? [])
+          .filter((artist: SpotifyArtist | null | undefined) => Boolean(artist?.id))
+          .map((artist: SpotifyArtist) => {
+            const cloned = this.cloneArtist(artist);
+            this.setArtistDetailsCache(cloned);
+            return cloned;
+          });
+
+        this.setRelatedArtistsCache(artistId, fetched);
+        related = fetched;
+      }
+
+      for (const artist of related) {
+        if (!artist?.id || relatedMap.has(artist.id) || seedSet.has(artist.id)) {
+          continue;
+        }
+
+        relatedMap.set(artist.id, this.cloneArtist(artist));
+      }
+    }
+
+    if (!relatedMap.size) {
+      return [];
+    }
+
+    const candidateArtists = Array.from(relatedMap.values());
+    const followedIds = await this.getFollowStatusForArtists(
+      candidateArtists.map((artist) => artist.id)
+    );
+
+    return candidateArtists
+      .filter((artist) => !followedIds.has(artist.id))
+      .sort((a, b) => {
+        const popularityDiff = (b.popularity ?? 0) - (a.popularity ?? 0);
+        if (popularityDiff !== 0) {
+          return popularityDiff;
+        }
+        return a.name.localeCompare(b.name);
+      })
+      .map((artist) => this.cloneArtist(artist));
+  }
+
   private async getFollowedArtists(limit?: number): Promise<SpotifyArtist[]> {
     if (!limit) {
       if (
@@ -604,6 +687,7 @@ export class SpotifyService {
   ): Promise<FollowArtistsResponse> {
     let followedCount = 0;
     const failedArtists: string[] = [];
+    const succeededIds: string[] = [];
     const totalChunks = Math.ceil(artistIds.length / CHUNK_SIZE_FOLLOW);
 
     for (let i = 0; i < artistIds.length; i += CHUNK_SIZE_FOLLOW) {
@@ -623,14 +707,24 @@ export class SpotifyService {
           })
         );
         followedCount += chunk.length;
+        succeededIds.push(...chunk);
       } catch (error) {
-        console.error('Failed to follow chunk:', error);
         failedArtists.push(...chunk);
+        console.error('Failed to follow chunk:', error);
       }
 
       if (i + CHUNK_SIZE_FOLLOW < artistIds.length) {
         await this.delay(2000);
       }
+    }
+
+    if (succeededIds.length) {
+      const timestamp = Date.now();
+      for (const artistId of succeededIds) {
+        this.followStatusCache.set(artistId, { isFollowed: true, timestamp });
+      }
+      this.followedArtistsCache = null;
+      this.followedArtistsCacheByLimit.clear();
     }
 
     return {

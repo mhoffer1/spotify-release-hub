@@ -15,6 +15,7 @@ const IPC_CHANNELS = {
   FOLLOW_ARTISTS: 'playlist:follow',
   FOLLOW_ARTISTS_PROGRESS: 'playlist:follow:progress',
   FOLLOW_ARTISTS_COMPLETE: 'playlist:follow:complete',
+  RELATED_ARTISTS: 'artists:related',
   // New Releases
   SCAN_RELEASES: 'releases:scan',
   SCAN_RELEASES_PROGRESS: 'releases:scan:progress',
@@ -37,6 +38,8 @@ import type {
   AnalyzePlaylistResponse,
   FollowArtistsRequest,
   FollowArtistsResponse,
+  GetRelatedArtistsRequest,
+  GetRelatedArtistsResponse,
   ScanReleasesRequest,
   ScanReleasesResponse,
   CreatePlaylistRequest,
@@ -76,6 +79,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.invoke(IPC_CHANNELS.FOLLOW_ARTISTS, request),
   onFollowProgress: (callback: (progress: ProgressUpdate) => void): Unsubscribe =>
     subscribe(IPC_CHANNELS.FOLLOW_ARTISTS_PROGRESS, callback),
+  getRelatedArtists: (request: GetRelatedArtistsRequest): InvokeResult<GetRelatedArtistsResponse> =>
+    ipcRenderer.invoke(IPC_CHANNELS.RELATED_ARTISTS, request),
 
   // Scan Releases
   scanReleases: (request: ScanReleasesRequest): InvokeResult<ScanReleasesResponse> =>
@@ -117,6 +122,9 @@ declare global {
       onAnalyzeProgress: (callback: (progress: ProgressUpdate) => void) => Unsubscribe;
       followArtists: (request: FollowArtistsRequest) => InvokeResult<FollowArtistsResponse>;
       onFollowProgress: (callback: (progress: ProgressUpdate) => void) => Unsubscribe;
+      getRelatedArtists: (
+        request: GetRelatedArtistsRequest
+      ) => InvokeResult<GetRelatedArtistsResponse>;
       scanReleases: (request: ScanReleasesRequest) => InvokeResult<ScanReleasesResponse>;
       onScanProgress: (callback: (progress: ProgressUpdate) => void) => Unsubscribe;
       createPlaylist: (request: CreatePlaylistRequest) => InvokeResult<CreatePlaylistResponse>;

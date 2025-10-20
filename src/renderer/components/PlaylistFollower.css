@@ -168,6 +168,12 @@
   min-width: 0;
 }
 
+.artist-genres {
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+
 .artist-name {
   font-size: 16px;
   font-weight: 600;
@@ -196,4 +202,26 @@
   padding: 60px 20px;
   font-size: 18px;
   color: var(--text-secondary);
+}
+
+.related-section {
+  margin-top: 48px;
+}
+
+.related-header {
+  align-items: flex-start;
+  gap: 16px;
+}
+
+.related-message {
+  margin-top: 16px;
+  padding: 16px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-secondary);
+}
+
+.related-message.error {
+  color: #ff6b6b;
+  background: rgba(255, 107, 107, 0.1);
 }
