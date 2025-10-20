@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import type { UnfollowedArtist, ProgressUpdate } from '@shared/types';
+import type { SpotifyArtist, UnfollowedArtist, ProgressUpdate } from '@shared/types';
 import './PlaylistFollower.css';
 
 function PlaylistFollower() {
@@ -13,6 +13,11 @@ function PlaylistFollower() {
     unfollowedArtists: UnfollowedArtist[];
   } | null>(null);
   const [selectedArtists, setSelectedArtists] = useState<Set<string>>(new Set());
+  const [relatedArtists, setRelatedArtists] = useState<SpotifyArtist[]>([]);
+  const [selectedRelatedArtists, setSelectedRelatedArtists] = useState<Set<string>>(new Set());
+  const [isFetchingRelated, setIsFetchingRelated] = useState(false);
+  const [hasFetchedRelated, setHasFetchedRelated] = useState(false);
+  const [relatedError, setRelatedError] = useState<string | null>(null);
 
   useEffect(() => {
     const unsubscribeAnalyze = window.electronAPI.onAnalyzeProgress(setProgress);
@@ -34,6 +39,10 @@ function PlaylistFollower() {
     setProgress(null);
     setResults(null);
     setSelectedArtists(new Set());
+    setRelatedArtists([]);
+    setSelectedRelatedArtists(new Set());
+    setRelatedError(null);
+    setHasFetchedRelated(false);
 
     const response = await window.electronAPI.analyzePlaylist({ playlistUrl });
 
@@ -105,6 +114,85 @@ function PlaylistFollower() {
     setProgress(null);
   };
 
+  const handleFindRelated = async () => {
+    if (selectedArtists.size === 0) {
+      alert('Please select at least one artist to find recommendations');
+      return;
+    }
+
+    setIsFetchingRelated(true);
+    setRelatedError(null);
+    setSelectedRelatedArtists(new Set());
+
+    const response = await window.electronAPI.getRelatedArtists({
+      artistIds: Array.from(selectedArtists),
+    });
+
+    if (response.success && response.data) {
+      setRelatedArtists(response.data.artists);
+    } else {
+      setRelatedArtists([]);
+      setRelatedError(response.error ?? 'Unable to fetch related artists.');
+    }
+
+    setHasFetchedRelated(true);
+    setIsFetchingRelated(false);
+  };
+
+  const toggleRelatedArtist = (artistId: string) => {
+    const next = new Set(selectedRelatedArtists);
+    if (next.has(artistId)) {
+      next.delete(artistId);
+    } else {
+      next.add(artistId);
+    }
+    setSelectedRelatedArtists(next);
+  };
+
+  const toggleAllRelated = () => {
+    if (selectedRelatedArtists.size === relatedArtists.length) {
+      setSelectedRelatedArtists(new Set());
+    } else {
+      setSelectedRelatedArtists(new Set(relatedArtists.map((artist) => artist.id)));
+    }
+  };
+
+  const handleFollowRelated = async () => {
+    if (selectedRelatedArtists.size === 0) {
+      alert('Please select at least one artist to follow');
+      return;
+    }
+
+    setIsFollowing(true);
+    setProgress(null);
+
+    const response = await window.electronAPI.followArtists({
+      artistIds: Array.from(selectedRelatedArtists),
+    });
+
+    if (response.success && response.data) {
+      alert(
+        `Successfully followed ${response.data.followedCount} artists!${
+          response.data.failedCount > 0
+            ? `\n${response.data.failedCount} failed to follow.`
+            : ''
+        }`
+      );
+
+      const failed = new Set(response.data.failedArtists);
+      const remaining = relatedArtists.filter(
+        (artist) => failed.has(artist.id) || !selectedRelatedArtists.has(artist.id)
+      );
+      setRelatedArtists(remaining);
+      setSelectedRelatedArtists(new Set());
+    } else {
+      alert(`Error: ${response.error}`);
+    }
+
+    setIsFollowing(false);
+    setProgress(null);
+  };
+
   return (
     <div className="playlist-follower">
       <div className="section-header">
@@ -156,6 +244,13 @@ function PlaylistFollower() {
                 {selectedArtists.size === results.unfollowedArtists.length
                   ? 'Deselect All'
                   : 'Select All'}
+              </button>
+              <button
+                className="btn btn-secondary"
+                onClick={handleFindRelated}
+                disabled={isFetchingRelated || selectedArtists.size === 0 || isFollowing}
+              >
+                {isFetchingRelated ? 'Finding...' : 'Find Similar Artists'}
               </button>
               <button
                 className="btn btn-primary"
@@ -219,6 +314,88 @@ function PlaylistFollower() {
       {results && results.unfollowedArtists.length === 0 && (
         <div className="empty-state">
           <p>You're already following all artists from this playlist!</p>
+        </div>
+      )}
+
+      {hasFetchedRelated && (
+        <div className="related-section">
+          <div className="results-header related-header">
+            <h3>Similar artists you might like</h3>
+            {relatedArtists.length > 0 && (
+              <div className="results-actions">
+                <button className="btn-link" onClick={toggleAllRelated}>
+                  {selectedRelatedArtists.size === relatedArtists.length
+                    ? 'Deselect All'
+                    : 'Select All'}
+                </button>
+                <button
+                  className="btn btn-primary"
+                  onClick={handleFollowRelated}
+                  disabled={selectedRelatedArtists.size === 0 || isFollowing}
+                >
+                  Follow Selected ({selectedRelatedArtists.size})
+                </button>
+              </div>
+            )}
+          </div>
+
+          {relatedError && <div className="related-message error">{relatedError}</div>}
+
+          {!relatedError && relatedArtists.length === 0 && (
+            <div className="related-message">No additional artists to recommend right now.</div>
+          )}
+
+          {relatedArtists.length > 0 && (
+            <div className="artist-list">
+              {relatedArtists.map((artist) => {
+                const genres = artist.genres?.slice(0, 3).join(', ');
+                return (
+                  <div
+                    key={artist.id}
+                    className={`artist-card ${
+                      selectedRelatedArtists.has(artist.id) ? 'selected' : ''
+                    }`}
+                    onClick={() => toggleRelatedArtist(artist.id)}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedRelatedArtists.has(artist.id)}
+                      onChange={() => {}}
+                      className="artist-checkbox"
+                    />
+                    {artist.images && artist.images.length > 0 ? (
+                      <img
+                        src={artist.images[0].url}
+                        alt={artist.name}
+                        className="artist-image"
+                      />
+                    ) : (
+                      <div className="artist-image-placeholder">
+                        <span className="artist-icon">♪</span>
+                      </div>
+                    )}
+                    <div className="artist-info">
+                      <div className="artist-name">{artist.name}</div>
+                      <div className="artist-genres">
+                        {genres ? `Top genres: ${genres}` : 'Genres unavailable'}
+                      </div>
+                      {artist.external_urls?.spotify && (
+                        <a
+                          href={artist.external_urls.spotify}
+                          className="artist-link"
+                          onClick={(e) => e.stopPropagation()}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          View on Spotify →
+                        </a>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
     </div>

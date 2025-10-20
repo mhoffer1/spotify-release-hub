@@ -14,6 +14,7 @@ import {
 import type {
   AnalyzePlaylistRequest,
   FollowArtistsRequest,
+  GetRelatedArtistsRequest,
   ScanReleasesRequest,
   CreatePlaylistRequest,
 } from '../shared/types';
@@ -308,6 +309,23 @@ ipcMain.handle(IPC_CHANNELS.FOLLOW_ARTISTS, async (_event: IpcMainInvokeEvent, r
     return { success: false, error: (error as Error).message };
   }
 });
+
+ipcMain.handle(
+  IPC_CHANNELS.RELATED_ARTISTS,
+  async (_event: IpcMainInvokeEvent, request: GetRelatedArtistsRequest) => {
+    try {
+      if (!spotifyService) {
+        throw new Error('Not authenticated');
+      }
+
+      const artists = await spotifyService.getRelatedArtists(request.artistIds);
+      return { success: true, data: { artists } };
+    } catch (error) {
+      console.error('Get related artists error:', error);
+      return { success: false, error: (error as Error).message };
+    }
+  }
+);
 
 ipcMain.handle(IPC_CHANNELS.SCAN_RELEASES, async (_event: IpcMainInvokeEvent, request: ScanReleasesRequest) => {
   try {
